@@ -12,9 +12,7 @@ use reth::chainspec::{ChainSpecProvider, EthChainSpec};
 use reth::providers::{BlockReaderIdExt, ProviderError, StateProviderFactory};
 use reth::revm::context::result::ResultAndState;
 use reth::revm::database::StateProviderDatabase;
-use reth::revm::db::CacheDB;
-use reth::revm::{Database, DatabaseCommit, State};
-use reth_evm::op_revm::{OpSpecId, OpTransaction};
+use reth::revm::{DatabaseCommit, State};
 use reth_evm::{
     eth::receipt_builder::ReceiptBuilderCtx, ConfigureEvm, Evm, EvmEnv, EvmError, InvalidTxError,
 };
@@ -23,8 +21,6 @@ use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_primitives::{OpBlock, OpReceipt, OpTransactionSigned};
 use rollup_boost::primitives::{ExecutionPayloadBaseV1, FlashblocksPayloadV1};
 use serde::{Deserialize, Serialize};
-use std::fmt::Display;
-use std::ops::Deref;
 use std::{io::Read, str::FromStr, sync::Arc, time::Instant};
 use tokio::sync::{broadcast, mpsc};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};

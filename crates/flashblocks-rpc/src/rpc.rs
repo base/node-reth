@@ -11,7 +11,7 @@ use alloy_consensus::{transaction::Recovered, transaction::TransactionInfo};
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::{Address, Sealable, TxHash, U256};
 use alloy_rpc_types::{BlockTransactions, Header};
-use alloy_rpc_types::{Bundle, StateContext, TransactionRequest, TransactionTrait};
+use alloy_rpc_types::{TransactionTrait};
 use jsonrpsee::{
     core::{async_trait, RpcResult},
     proc_macros::rpc,
