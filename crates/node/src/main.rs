@@ -12,7 +12,6 @@ use reth::{
 use reth_optimism_cli::{chainspec::OpChainSpecParser, Cli};
 use reth_optimism_node::args::RollupArgs;
 use reth_optimism_node::OpNode;
-use reth_rpc_eth_api::RpcNodeCore;
 use tracing::info;
 
 #[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
