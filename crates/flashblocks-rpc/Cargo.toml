@@ -83,3 +83,6 @@ uuid.workspace = true
 time.workspace = true
 chrono.workspace = true
 brotli.workspace = true
+
+[dev-dependencies]
+reth-provider = {workspace = true, default-features = true, features = ["test-utils"]}

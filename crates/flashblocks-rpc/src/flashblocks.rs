@@ -5,22 +5,25 @@ use alloy_primitives::map::B256HashMap;
 use alloy_primitives::{map::foldhash::HashMap, Address, Bytes, B256};
 use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3};
 use alloy_rpc_types_eth::state::{AccountOverride, StateOverride, StateOverridesBuilder};
+use eyre::anyhow;
 use futures_util::StreamExt;
-use reth::chainspec::ChainSpecProvider;
+use reqwest::Client;
+use reth::chainspec::{ChainSpecProvider, EthChainSpec};
 use reth::providers::{BlockReaderIdExt, ProviderError, StateProviderFactory};
 use reth::revm::context::result::ResultAndState;
 use reth::revm::database::StateProviderDatabase;
 use reth::revm::db::CacheDB;
 use reth::revm::{Database, DatabaseCommit, State};
-use reth_evm::op_revm::OpSpecId;
+use reth_evm::op_revm::{OpSpecId, OpTransaction};
 use reth_evm::{
     eth::receipt_builder::ReceiptBuilderCtx, ConfigureEvm, Evm, EvmEnv, EvmError, InvalidTxError,
 };
-use reth_optimism_chainspec::OpChainSpec;
+use reth_optimism_chainspec::{OpChainSpec, OpHardforks};
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_primitives::{OpBlock, OpReceipt, OpTransactionSigned};
 use rollup_boost::primitives::{ExecutionPayloadBaseV1, FlashblocksPayloadV1};
 use serde::{Deserialize, Serialize};
+use std::fmt::Display;
 use std::ops::Deref;
 use std::{io::Read, str::FromStr, sync::Arc, time::Instant};
 use tokio::sync::{broadcast, mpsc};
@@ -79,7 +82,7 @@ pub struct FlashblocksClient<Client> {
 impl<Client> FlashblocksClient<Client>
 where
     Client: StateProviderFactory
-        + ChainSpecProvider<ChainSpec = OpChainSpec>
+        + ChainSpecProvider<ChainSpec: EthChainSpec<Header = Header> + OpHardforks>
         + BlockReaderIdExt<Header = Header>
         + Clone
         + 'static,
@@ -193,10 +196,9 @@ where
         // Spawn actor's event loop
         tokio::spawn(async move {
             while let Some(message) = mailbox.recv().await {
-                let client = client.clone();
                 match message {
                     ActorMessage::BestPayload { payload } => {
-                        process_payload(payload, &cache_clone, &receipt_sender_clone, client);
+                        process_payload(payload, &cache_clone, &receipt_sender_clone, &client);
                     }
                 }
             }
@@ -231,10 +233,10 @@ fn process_payload<Client>(
     payload: FlashblocksPayloadV1,
     cache: &Arc<Cache>,
     receipt_sender: &broadcast::Sender<ReceiptWithHash>,
-    client: Client,
+    client: &Client,
 ) where
     Client: StateProviderFactory
-        + ChainSpecProvider<ChainSpec = OpChainSpec>
+        + ChainSpecProvider<ChainSpec: EthChainSpec<Header = Header> + OpHardforks>
         + BlockReaderIdExt<Header = Header>
         + Clone,
 {
@@ -348,59 +350,21 @@ fn process_payload<Client>(
         }
     };
 
-    let state = client
-        .state_by_block_number_or_tag(BlockNumberOrTag::Number(block_number - 1))
-        .expect("get state for commited block");
-    let state = StateProviderDatabase::new(state);
-    let db = State::builder()
-        .with_database(state)
-        .with_bundle_update()
-        .build();
-
-    let block_env_attributes = OpNextBlockEnvAttributes {
-        timestamp: base.timestamp,
-        suggested_fee_recipient: base.fee_recipient,
-        prev_randao: base.prev_randao,
-        gas_limit: base.gas_limit,
-        parent_beacon_block_root: Some(base.parent_beacon_block_root),
-        extra_data: base.extra_data.clone(),
-    };
-    let header = client
-        .header_by_number(block_number - 1)
-        .expect("get header")
-        .expect("existing header");
-    let evm_config = OpEvmConfig::optimism(client.chain_spec());
-    let evm_env = evm_config
-        .next_evm_env(&header, &block_env_attributes)
-        .expect("create evm env");
-
-    let mut evm = evm_config.evm_with_env(db, evm_env);
-    let mut state_cache_builder = StateOverridesBuilder::default();
-    for tx in &block.body.transactions {
-        let sender = tx.recover_signer().expect("success");
-        let recovered = Recovered::new_unchecked(tx.clone(), sender);
-        let ResultAndState { result, state } =
-            evm.transact(recovered).expect("execute flashblocks txs");
-        for (addr, acc) in &state {
-            let state_diff = B256HashMap::<B256>::from_iter(
-                acc.storage
-                    .iter()
-                    .map(|(&key, slot)| (key.into(), slot.present_value.into())),
+    let overrides = match process_eth_overrides(
+        client,
+        &base,
+        block_number,
+        &block.body.transactions,
+    ) {
+        Ok(state) => state,
+        Err(e) => {
+            error!(
+                message = "Unable to execute flashblocks transactions. Eth call override is empty.",
+                error = %e,
             );
-            let acc_override = AccountOverride {
-                balance: Some(acc.info.balance),
-                nonce: Some(acc.info.nonce),
-                code: acc.info.code.clone().map(|code| code.bytes()),
-                state: None,
-                state_diff: Some(state_diff),
-                move_precompile_to: None,
-            };
-            state_cache_builder = state_cache_builder.append(addr.clone(), acc_override);
+            StateOverride::default()
         }
-        evm.db_mut().commit(state);
-        info!("executed tx, res: {:?}", result);
-    }
-    let overrides = state_cache_builder.build();
+    };
     if let Err(e) = cache.set(CacheKey::PendingOverrides, &overrides, Some(10)) {
         error!(
             message = "failed to set pending overrides in cache",
@@ -512,6 +476,71 @@ fn process_payload<Client>(
             processing_time = ?msg_processing_start_time.elapsed()
         );
     }
+}
+
+fn process_eth_overrides<Client>(
+    client: &Client,
+    base: &ExecutionPayloadBaseV1,
+    block_number: u64,
+    transactions: &Vec<OpTransactionSigned>,
+) -> Result<StateOverride, Box<dyn std::error::Error>>
+where
+    Client: StateProviderFactory
+        + ChainSpecProvider<ChainSpec: EthChainSpec<Header = Header> + OpHardforks>
+        + BlockReaderIdExt<Header = Header>
+        + Clone,
+{
+    // Previous block is used to get state and the header
+    let previous_block = block_number - 1;
+    // Getting state from the previous block. If it's absent we will fail eth_override setting
+    let state = client.state_by_block_number_or_tag(BlockNumberOrTag::Number(previous_block))?;
+    let state = StateProviderDatabase::new(state);
+    let db = State::builder()
+        .with_database(state)
+        .with_bundle_update()
+        .build();
+
+    let block_env_attributes = OpNextBlockEnvAttributes {
+        timestamp: base.timestamp,
+        suggested_fee_recipient: base.fee_recipient,
+        prev_randao: base.prev_randao,
+        gas_limit: base.gas_limit,
+        parent_beacon_block_root: Some(base.parent_beacon_block_root),
+        extra_data: base.extra_data.clone(),
+    };
+    let header = client.header_by_number(previous_block)?.ok_or(anyhow!(
+        "Failed to extract header for block number {}. Skipping eth_call override setting",
+        previous_block
+    ))?;
+    let evm_config = OpEvmConfig::optimism(client.chain_spec());
+    let evm_env = evm_config.next_evm_env(&header, &block_env_attributes)?;
+
+    let mut evm = evm_config.evm_with_env(db, evm_env);
+    let mut state_cache_builder = StateOverridesBuilder::default();
+    for tx in transactions {
+        let sender = tx.recover_signer()?;
+        let recovered = Recovered::new_unchecked(tx.clone(), sender);
+        let ResultAndState { result, state } = evm.transact(recovered)?;
+        for (addr, acc) in &state {
+            let state_diff = B256HashMap::<B256>::from_iter(
+                acc.storage
+                    .iter()
+                    .map(|(&key, slot)| (key.into(), slot.present_value.into())),
+            );
+            let acc_override = AccountOverride {
+                balance: Some(acc.info.balance),
+                nonce: Some(acc.info.nonce),
+                code: acc.info.code.clone().map(|code| code.bytes()),
+                state: None,
+                state_diff: Some(state_diff),
+                move_precompile_to: None,
+            };
+            state_cache_builder = state_cache_builder.append(addr.clone(), acc_override);
+        }
+        evm.db_mut().commit(state);
+        info!("executed tx, res: {:?}", result);
+    }
+    Ok(state_cache_builder.build())
 }
 
 fn update_flashblocks_index(index: u64, cache: &Arc<Cache>, metrics: &Metrics) {
@@ -736,8 +765,14 @@ fn get_and_set_all_receipts(
 mod tests {
     use super::*;
     use alloy_consensus::{Receipt, TxReceipt};
-    use alloy_primitives::{Address, B256, U256};
+    use alloy_primitives::{Address, Signature, B256, U256};
     use alloy_rpc_types_engine::PayloadId;
+    use reth::primitives::{EthPrimitives, Transaction, TransactionSigned};
+    use reth_evm::op_revm::transaction::abstraction::OpTransactionBuilder;
+    use reth_evm::op_revm::OpTransaction;
+    use reth_optimism_chainspec::OpChainSpecBuilder;
+    use reth_primitives::{Block, BlockBody};
+    use reth_provider::test_utils::MockEthProvider;
     use rollup_boost::primitives::{ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1};
     use std::str::FromStr;
 
@@ -889,17 +924,18 @@ mod tests {
 
     #[test]
     fn test_process_payload() {
+        let client = get_mock_provider();
         let cache = Arc::new(Cache::default());
         let (receipt_sender, mut receipt_receiver) = broadcast::channel(100);
 
         let payload = create_first_payload();
 
         // Process first payload
-        process_payload(payload, &cache, &receipt_sender);
+        process_payload(payload, &cache, &receipt_sender, &client);
 
         let payload2 = create_second_payload();
         // Process second payload
-        process_payload(payload2, &cache, &receipt_sender);
+        process_payload(payload2, &cache, &receipt_sender, &client);
 
         // Check that receipts were broadcast for both transactions
         let mut receipts = vec![];
@@ -1034,6 +1070,8 @@ mod tests {
 
     #[test]
     fn test_skip_initial_non_zero_index_payload() {
+        let chain_spec = OpChainSpecBuilder::base_mainnet().build();
+        let client = get_mock_provider();
         let cache = Arc::new(Cache::default());
         let (receipt_sender, _) = broadcast::channel(100);
 
@@ -1052,7 +1090,7 @@ mod tests {
         };
 
         // Process payload
-        process_payload(payload, &cache, &receipt_sender);
+        process_payload(payload, &cache, &receipt_sender, &client);
 
         // Verify no block was stored, since it skips the first payload
         assert!(cache.get::<OpBlock>(&CacheKey::PendingBlock).is_none());
@@ -1060,6 +1098,8 @@ mod tests {
 
     #[test]
     fn test_flash_block_tracking() {
+        let chain_spec = OpChainSpecBuilder::base_mainnet().build();
+        let client = get_mock_provider();
         // Create cache
         let cache = Arc::new(Cache::default());
         let (receipt_sender, _) = broadcast::channel(100);
@@ -1067,7 +1107,7 @@ mod tests {
         // Process first block with 3 flash blocks
         // Block 1, payload 0 (starts a new block)
         let payload1_0 = create_payload_with_index(0, 1);
-        process_payload(payload1_0, &cache, &receipt_sender);
+        process_payload(payload1_0, &cache, &receipt_sender, &client);
 
         // Check that highest_payload_index was set to 0
         let highest = cache.get::<u64>(&CacheKey::HighestPayloadIndex).unwrap();
@@ -1075,7 +1115,7 @@ mod tests {
 
         // Block 1, payload 1
         let payload1_1 = create_payload_with_index(1, 1);
-        process_payload(payload1_1, &cache, &receipt_sender);
+        process_payload(payload1_1, &cache, &receipt_sender, &client);
 
         // Check that highest_payload_index was updated
         let highest = cache.get::<u64>(&CacheKey::HighestPayloadIndex).unwrap();
@@ -1083,7 +1123,7 @@ mod tests {
 
         // Block 1, payload 2
         let payload1_2 = create_payload_with_index(2, 1);
-        process_payload(payload1_2, &cache, &receipt_sender);
+        process_payload(payload1_2, &cache, &receipt_sender, &client);
 
         // Check that highest_payload_index was updated
         let highest = cache.get::<u64>(&CacheKey::HighestPayloadIndex).unwrap();
@@ -1091,7 +1131,7 @@ mod tests {
 
         // Now start a new block (block 2, payload 0)
         let payload2_0 = create_payload_with_index(0, 2);
-        process_payload(payload2_0, &cache, &receipt_sender);
+        process_payload(payload2_0, &cache, &receipt_sender, &client);
 
         // Check that highest_payload_index was reset to 0
         let highest = cache.get::<u64>(&CacheKey::HighestPayloadIndex).unwrap();
@@ -1099,7 +1139,7 @@ mod tests {
 
         // Block 2, payload 1 (out of order with payload 3)
         let payload2_1 = create_payload_with_index(1, 2);
-        process_payload(payload2_1, &cache, &receipt_sender);
+        process_payload(payload2_1, &cache, &receipt_sender, &client);
 
         // Check that highest_payload_index was updated
         let highest = cache.get::<u64>(&CacheKey::HighestPayloadIndex).unwrap();
@@ -1107,7 +1147,7 @@ mod tests {
 
         // Block 2, payload 3 (skipping 2)
         let payload2_3 = create_payload_with_index(3, 2);
-        process_payload(payload2_3, &cache, &receipt_sender);
+        process_payload(payload2_3, &cache, &receipt_sender, &client);
 
         // Check that highest_payload_index was updated
         let highest = cache.get::<u64>(&CacheKey::HighestPayloadIndex).unwrap();
@@ -1115,7 +1155,7 @@ mod tests {
 
         // Block 2, payload 2 (out of order, should not change highest)
         let payload2_2 = create_payload_with_index(2, 2);
-        process_payload(payload2_2, &cache, &receipt_sender);
+        process_payload(payload2_2, &cache, &receipt_sender, &client);
 
         // Check that highest_payload_index is still 3
         let highest = cache.get::<u64>(&CacheKey::HighestPayloadIndex).unwrap();
@@ -1123,11 +1163,52 @@ mod tests {
 
         // Start block 3, payload 0
         let payload3_0 = create_payload_with_index(0, 3);
-        process_payload(payload3_0, &cache, &receipt_sender);
+        process_payload(payload3_0, &cache, &receipt_sender, &client);
 
         // Check that highest_payload_index was reset to 0
         // Also verify metric would have been recorded (though we can't directly check the metric's value)
         let highest = cache.get::<u64>(&CacheKey::HighestPayloadIndex).unwrap();
         assert_eq!(highest, 0);
+    }
+
+    /// Create provide and push 1 block with transaction
+    fn get_mock_provider() -> MockEthProvider<EthPrimitives, OpChainSpec> {
+        let chain_spec = OpChainSpecBuilder::base_mainnet().build();
+        let client = MockEthProvider {
+            blocks: Default::default(),
+            headers: Default::default(),
+            receipts: Default::default(),
+            accounts: Default::default(),
+            chain_spec: Arc::new(chain_spec),
+            state_roots: Default::default(),
+            block_body_indices: Default::default(),
+            tx: Default::default(),
+            prune_modes: Default::default(),
+        };
+        let mut parent_hash = B256::default();
+        let header = Header {
+            number: 1,
+            gas_limit: 60_000_000,
+            gas_used: 0,
+            base_fee_per_gas: Some(1000),
+            parent_hash,
+            ..Default::default()
+        };
+        let transaction = TransactionSigned::new_unhashed(
+            Transaction::Legacy(Default::default()),
+            Signature::test_signature(),
+        );
+        let transactions = vec![transaction];
+        client.add_block(
+            parent_hash,
+            Block {
+                header: header.clone(),
+                body: BlockBody {
+                    transactions,
+                    ..Default::default()
+                },
+            },
+        );
+        client
     }
 }

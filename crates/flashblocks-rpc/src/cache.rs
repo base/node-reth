@@ -1,8 +1,4 @@
 use alloy_primitives::{Address, B256};
-use arc_swap::ArcSwap;
-use reth::providers::StateProviderBox;
-use reth::revm::database::StateProviderDatabase;
-use revm::database::{CacheDB, State};
 use serde::{de::DeserializeOwned, Serialize};
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
