@@ -13,9 +13,7 @@ use reth::providers::{BlockReaderIdExt, ProviderError, StateProviderFactory};
 use reth::revm::context::result::ResultAndState;
 use reth::revm::database::StateProviderDatabase;
 use reth::revm::{DatabaseCommit, State};
-use reth_evm::{
-    eth::receipt_builder::ReceiptBuilderCtx, ConfigureEvm, Evm, EvmEnv, EvmError, InvalidTxError,
-};
+use reth_evm::{ConfigureEvm, Evm};
 use reth_optimism_chainspec::{OpChainSpec, OpHardforks};
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_primitives::{OpBlock, OpReceipt, OpTransactionSigned};
