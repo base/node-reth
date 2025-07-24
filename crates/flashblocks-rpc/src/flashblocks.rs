@@ -364,6 +364,8 @@ fn process_payload<Client>(
             error = %e
         );
         return;
+    } else {
+        info!("Set overrides in cache {:?}", overrides);
     }
 
     // "pending" because users query the block using "pending" tag
