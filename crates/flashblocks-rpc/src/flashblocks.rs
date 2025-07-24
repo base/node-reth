@@ -1,25 +1,28 @@
-use std::{io::Read, str::FromStr, sync::Arc, time::Instant};
-use std::ops::Deref;
-use alloy_consensus::Header;
 use alloy_consensus::transaction::{Recovered, SignerRecoverable};
+use alloy_consensus::Header;
 use alloy_eips::BlockNumberOrTag;
-use alloy_primitives::{map::foldhash::HashMap, Address, Bytes};
+use alloy_primitives::map::B256HashMap;
+use alloy_primitives::{map::foldhash::HashMap, Address, Bytes, B256};
 use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3};
+use alloy_rpc_types_eth::state::{AccountOverride, StateOverride, StateOverridesBuilder};
 use futures_util::StreamExt;
 use reth::chainspec::ChainSpecProvider;
 use reth::providers::{BlockReaderIdExt, ProviderError, StateProviderFactory};
-use reth::revm::{Database, State};
+use reth::revm::context::result::ResultAndState;
 use reth::revm::database::StateProviderDatabase;
 use reth::revm::db::CacheDB;
-use reth_optimism_chainspec::OpChainSpec;
-use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
+use reth::revm::{Database, DatabaseCommit, State};
+use reth_evm::op_revm::OpSpecId;
 use reth_evm::{
     eth::receipt_builder::ReceiptBuilderCtx, ConfigureEvm, Evm, EvmEnv, EvmError, InvalidTxError,
 };
-use reth_evm::op_revm::OpSpecId;
+use reth_optimism_chainspec::OpChainSpec;
+use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_primitives::{OpBlock, OpReceipt, OpTransactionSigned};
 use rollup_boost::primitives::{ExecutionPayloadBaseV1, FlashblocksPayloadV1};
 use serde::{Deserialize, Serialize};
+use std::ops::Deref;
+use std::{io::Read, str::FromStr, sync::Arc, time::Instant};
 use tokio::sync::{broadcast, mpsc};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use tracing::{debug, error, info};
@@ -73,15 +76,15 @@ pub struct FlashblocksClient<Client> {
     receipt_sender: broadcast::Sender<ReceiptWithHash>,
 }
 
-impl <Client> FlashblocksClient<Client>
-where Client: StateProviderFactory
-                + ChainSpecProvider<ChainSpec = OpChainSpec>
-                + BlockReaderIdExt<Header = Header>
-                + Clone
-                + 'static
+impl<Client> FlashblocksClient<Client>
+where
+    Client: StateProviderFactory
+        + ChainSpecProvider<ChainSpec = OpChainSpec>
+        + BlockReaderIdExt<Header = Header>
+        + Clone
+        + 'static,
 {
-    pub fn new(cache: Arc<Cache>, receipt_buffer_size: usize, client: Client,
-    ) -> Self {
+    pub fn new(cache: Arc<Cache>, receipt_buffer_size: usize, client: Client) -> Self {
         let (sender, mailbox) = mpsc::channel(100);
         let (receipt_sender, _) = broadcast::channel(receipt_buffer_size);
 
@@ -203,7 +206,7 @@ where Client: StateProviderFactory
     }
 }
 
-impl FlashblocksApi for FlashblocksClient<()> {
+impl<Client> FlashblocksApi for FlashblocksClient<Client> {
     fn subscribe_to_receipts(&self) -> broadcast::Receiver<ReceiptWithHash> {
         self.receipt_sender.subscribe()
     }
@@ -229,11 +232,11 @@ fn process_payload<Client>(
     cache: &Arc<Cache>,
     receipt_sender: &broadcast::Sender<ReceiptWithHash>,
     client: Client,
-)
-where Client: StateProviderFactory
-    + ChainSpecProvider<ChainSpec = OpChainSpec>
-    + BlockReaderIdExt<Header = Header>
-    + Clone
+) where
+    Client: StateProviderFactory
+        + ChainSpecProvider<ChainSpec = OpChainSpec>
+        + BlockReaderIdExt<Header = Header>
+        + Clone,
 {
     let metrics = Metrics::default();
     let msg_processing_start_time = Instant::now();
@@ -283,13 +286,6 @@ where Client: StateProviderFactory
             );
             return;
         }
-        let state = client.state_by_block_number_or_tag(BlockNumberOrTag::Number(block_number - 1)).expect("get state for commited block");
-        let state = StateProviderDatabase::new(state);
-        let db = State::builder()
-            .with_database(state)
-            .with_bundle_update()
-            .build();
-        cache.state.write().unwrap().replace(db);
         base
     } else {
         match cache.get(&CacheKey::Base(block_number)) {
@@ -317,19 +313,6 @@ where Client: StateProviderFactory
         }
     };
 
-    let block_env_attributes = OpNextBlockEnvAttributes {
-        timestamp: base.timestamp,
-        suggested_fee_recipient: base.fee_recipient,
-        prev_randao: base.prev_randao,
-        gas_limit: base.gas_limit,
-        parent_beacon_block_root: Some(base.parent_beacon_block_root),
-        extra_data: base.extra_data.clone(),
-    };
-    let header = client.header_by_number(block_number - 1).expect("get header").expect("existing header");
-    let evm_config = OpEvmConfig::optimism(client.chain_spec());
-    let evm_env = evm_config
-        .next_evm_env(&header, &block_env_attributes).expect("create evm env");
-
     let execution_payload: ExecutionPayloadV3 = ExecutionPayloadV3 {
         blob_gas_used: 0,
         excess_blob_gas: 0,
@@ -346,7 +329,7 @@ where Client: StateProviderFactory
                 gas_limit: base.gas_limit,
                 gas_used: diff.gas_used,
                 timestamp: base.timestamp,
-                extra_data: base.extra_data,
+                extra_data: base.extra_data.clone(),
                 base_fee_per_gas: base.base_fee_per_gas,
                 block_hash: diff.block_hash,
                 transactions,
@@ -365,15 +348,65 @@ where Client: StateProviderFactory
         }
     };
 
-    {
-        let mut db = cache.state.write().unwrap().take().unwrap();
-        let mut evm = evm_config.evm_with_env(*db, evm_env);
-        for tx in block.body.transactions.clone() {
-            let sender = tx.recover_signer().expect("success");
-            let recovered = Recovered::new_unchecked(tx.clone(), sender);
-            let res = evm.transact_commit(recovered).expect("asd");
-            info!("executed tx, res: {:?}", res);
+    let state = client
+        .state_by_block_number_or_tag(BlockNumberOrTag::Number(block_number - 1))
+        .expect("get state for commited block");
+    let state = StateProviderDatabase::new(state);
+    let db = State::builder()
+        .with_database(state)
+        .with_bundle_update()
+        .build();
+
+    let block_env_attributes = OpNextBlockEnvAttributes {
+        timestamp: base.timestamp,
+        suggested_fee_recipient: base.fee_recipient,
+        prev_randao: base.prev_randao,
+        gas_limit: base.gas_limit,
+        parent_beacon_block_root: Some(base.parent_beacon_block_root),
+        extra_data: base.extra_data.clone(),
+    };
+    let header = client
+        .header_by_number(block_number - 1)
+        .expect("get header")
+        .expect("existing header");
+    let evm_config = OpEvmConfig::optimism(client.chain_spec());
+    let evm_env = evm_config
+        .next_evm_env(&header, &block_env_attributes)
+        .expect("create evm env");
+
+    let mut evm = evm_config.evm_with_env(db, evm_env);
+    let mut state_cache_builder = StateOverridesBuilder::default();
+    for tx in &block.body.transactions {
+        let sender = tx.recover_signer().expect("success");
+        let recovered = Recovered::new_unchecked(tx.clone(), sender);
+        let ResultAndState { result, state } =
+            evm.transact(recovered).expect("execute flashblocks txs");
+        for (addr, acc) in &state {
+            let state_diff = B256HashMap::<B256>::from_iter(
+                acc.storage
+                    .iter()
+                    .map(|(&key, slot)| (key.into(), slot.present_value.into())),
+            );
+            let acc_override = AccountOverride {
+                balance: Some(acc.info.balance),
+                nonce: Some(acc.info.nonce),
+                code: acc.info.code.clone().map(|code| code.bytes()),
+                state: None,
+                state_diff: Some(state_diff),
+                move_precompile_to: None,
+            };
+            state_cache_builder = state_cache_builder.append(addr.clone(), acc_override);
         }
+        evm.db_mut().commit(state);
+        info!("executed tx, res: {:?}", result);
+    }
+    let overrides = state_cache_builder.build();
+    if let Err(e) = cache.set(CacheKey::PendingOverrides, &overrides, Some(10)) {
+        error!(
+            message = "failed to set pending overrides in cache",
+            error = %e
+        );
+        return;
     }
 
     // "pending" because users query the block using "pending" tag

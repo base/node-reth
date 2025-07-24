@@ -1,12 +1,13 @@
 use alloy_primitives::{Address, B256};
+use arc_swap::ArcSwap;
+use reth::providers::StateProviderBox;
+use reth::revm::database::StateProviderDatabase;
+use revm::database::{CacheDB, State};
 use serde::{de::DeserializeOwned, Serialize};
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
-use reth::providers::StateProviderBox;
-use reth::revm::database::StateProviderDatabase;
-use revm::database::{CacheDB, State};
 
 #[derive(Hash, Eq, PartialEq, Debug, Clone)]
 pub enum CacheKey {
@@ -24,6 +25,8 @@ pub enum CacheKey {
     DiffTransactions(u64),                                    // diff:transactions:block_number
     AccountBalance(Address),                                  // address
     HighestPayloadIndex,                                      // highest_payload_index
+    // Overrides for eth_call based on flashblocks executed txs
+    PendingOverrides, // pending
 }
 
 impl Display for CacheKey {
@@ -48,6 +51,7 @@ impl Display for CacheKey {
             CacheKey::DiffTransactions(number) => write!(f, "diff:transactions:{number:?}"),
             CacheKey::AccountBalance(addr) => write!(f, "{addr:?}"),
             CacheKey::HighestPayloadIndex => write!(f, "highest_payload_index"),
+            CacheKey::PendingOverrides => write!(f, "pending_storage_slots"),
         }
     }
 }
@@ -61,14 +65,12 @@ struct CacheEntry<T> {
 #[derive(Debug, Clone)]
 pub struct Cache {
     store: Arc<RwLock<HashMap<CacheKey, CacheEntry<Vec<u8>>>>>,
-    pub state: Arc<RwLock<Option<State<StateProviderDatabase<StateProviderBox>>>>>,
 }
 
 impl Default for Cache {
     fn default() -> Self {
         Self {
             store: Arc::new(RwLock::new(HashMap::new())),
-            state: Arc::new(RwLock::new(None)),
         }
     }
 }

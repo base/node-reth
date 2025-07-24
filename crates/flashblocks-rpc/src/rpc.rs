@@ -10,8 +10,8 @@ use alloy_consensus::TxReceipt;
 use alloy_consensus::{transaction::Recovered, transaction::TransactionInfo};
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::{Address, Sealable, TxHash, U256};
-use alloy_rpc_types::{Bundle, StateContext, TransactionRequest, TransactionTrait};
 use alloy_rpc_types::{BlockTransactions, Header};
+use alloy_rpc_types::{Bundle, StateContext, TransactionRequest, TransactionTrait};
 use jsonrpsee::{
     core::{async_trait, RpcResult},
     proc_macros::rpc,
@@ -560,39 +560,15 @@ where
     ) -> RpcResult<alloy_primitives::Bytes> {
         // Check if this is a call to the pending block
         let block_id = block_number.unwrap_or_default();
-
+        let mut overrides = alloy_rpc_types_eth::state::EvmOverrides::default();
         if block_id.is_pending() {
             self.metrics.call.increment(1);
-
-            let mut transaction_requests = self
+            let state_override = self
                 .cache
-                .get::<OpBlock>(&CacheKey::PendingBlock)
-                .unwrap_or_default()
-                .body
-                .transactions
-                .iter()
-                .map(|tx| TransactionRequest::from_transaction(tx.clone()))
-                .collect::<Vec<TransactionRequest>>();
-
-            transaction_requests.push(transaction);
-            let bundles = vec![Bundle::from(transaction_requests)];
-
-            let context = StateContext {
-                block_number: Some(BlockId::Number(BlockNumberOrTag::Pending)),
-                transaction_index: None,
-            };
-            return EthCall::call_many(&self.eth_api, bundles, Some(context), None)
-                .await
-                .map_err(Into::into)
-                .map(|responses| {
-                    responses
-                        .first()
-                        .map_or_else(alloy_primitives::Bytes::default, |r| {
-                            r.last().unwrap().value.clone().unwrap()
-                        })
-                });
+                .get::<alloy_rpc_types_eth::state::StateOverride>(&CacheKey::PendingOverrides)
+                .unwrap();
+            overrides.state = Some(state_override);
         }
-        let overrides = alloy_rpc_types_eth::state::EvmOverrides::default();
         // Delegate to the underlying eth_api
         EthCall::call(&self.eth_api, transaction, block_number, overrides)
             .await
