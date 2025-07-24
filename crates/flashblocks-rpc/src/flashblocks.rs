@@ -7,9 +7,8 @@ use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPa
 use alloy_rpc_types_eth::state::{AccountOverride, StateOverride, StateOverridesBuilder};
 use eyre::anyhow;
 use futures_util::StreamExt;
-use reqwest::Client;
 use reth::chainspec::{ChainSpecProvider, EthChainSpec};
-use reth::providers::{BlockReaderIdExt, ProviderError, StateProviderFactory};
+use reth::providers::{BlockReaderIdExt, StateProviderFactory};
 use reth::revm::context::result::ResultAndState;
 use reth::revm::database::StateProviderDatabase;
 use reth::revm::{DatabaseCommit, State};
@@ -529,7 +528,7 @@ where
                 state_diff: Some(state_diff),
                 move_precompile_to: None,
             };
-            state_cache_builder = state_cache_builder.append(addr.clone(), acc_override);
+            state_cache_builder = state_cache_builder.append(*addr, acc_override);
         }
         evm.db_mut().commit(state);
         info!("executed tx, res: {:?}", result);
