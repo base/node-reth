@@ -19,7 +19,7 @@ use jsonrpsee::{
 use op_alloy_consensus::OpTxEnvelope;
 use op_alloy_consensus::{OpDepositReceipt, OpReceiptEnvelope};
 use op_alloy_network::Optimism;
-use op_alloy_rpc_types::Transaction;
+use op_alloy_rpc_types::{OpTransactionRequest, Transaction};
 use reth::providers::{CanonStateSubscriptions, TransactionsProvider};
 use reth::rpc::server_types::eth::TransactionSource;
 use reth::{api::BlockBody, providers::HeaderProvider};
@@ -81,7 +81,7 @@ pub trait EthApiOverride {
     #[method(name = "call")]
     async fn call(
         &self,
-        transaction: TransactionRequest,
+        transaction: OpTransactionRequest,
         block_number: Option<BlockId>,
     ) -> RpcResult<alloy_primitives::Bytes>;
 }
@@ -555,7 +555,7 @@ where
 
     async fn call(
         &self,
-        transaction: TransactionRequest,
+        transaction: OpTransactionRequest,
         block_number: Option<BlockId>,
     ) -> RpcResult<alloy_primitives::Bytes> {
         // Check if this is a call to the pending block

@@ -277,7 +277,7 @@ fn process_payload<Client>(
         return;
     }
     // base only appears once in the first payload index
-    let (base) = if let Some(base) = payload.base {
+    let base = if let Some(base) = payload.base {
         // TODO: initial set state in here
         if let Err(e) = cache.set(CacheKey::Base(block_number), &base, Some(10)) {
             error!(
