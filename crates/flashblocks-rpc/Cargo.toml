@@ -67,7 +67,6 @@ reqwest.workspace = true
 
 # rpc
 jsonrpsee.workspace = true
-arc-swap.workspace = true
 
 # misc
 clap.workspace = true

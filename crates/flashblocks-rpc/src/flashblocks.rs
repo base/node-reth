@@ -66,7 +66,6 @@ pub struct FlashblocksClient<Client> {
     sender: mpsc::Sender<ActorMessage>,
     mailbox: mpsc::Receiver<ActorMessage>,
     cache: Arc<Cache>,
-    /// Current pending state with all intermidiate transactions froms flashblocks applied
     client: Client,
     metrics: Metrics,
     receipt_sender: broadcast::Sender<ReceiptWithHash>,
@@ -273,7 +272,6 @@ fn process_payload<Client>(
     }
     // base only appears once in the first payload index
     let base = if let Some(base) = payload.base {
-        // TODO: initial set state in here
         if let Err(e) = cache.set(CacheKey::Base(block_number), &base, Some(10)) {
             error!(
                 message = "failed to set base in cache",
@@ -484,7 +482,7 @@ where
 {
     // Previous block is used to get state and the header
     let previous_block = block_number - 1;
-    // Getting state from the previous block. If it's absent we will fail eth_override setting
+    // If there is no previous state we will put empty override in cache
     let state = client.state_by_block_number_or_tag(BlockNumberOrTag::Number(previous_block))?;
     let state = StateProviderDatabase::new(state);
     let db = State::builder()
@@ -512,7 +510,8 @@ where
     for tx in transactions {
         let sender = tx.recover_signer()?;
         let recovered = Recovered::new_unchecked(tx.clone(), sender);
-        let ResultAndState { result, state } = evm.transact(recovered)?;
+        // We don't care about execution result, only produced state
+        let ResultAndState { state, .. } = evm.transact(recovered)?;
         for (addr, acc) in &state {
             let state_diff = B256HashMap::<B256>::from_iter(
                 acc.storage
@@ -530,7 +529,6 @@ where
             state_cache_builder = state_cache_builder.append(*addr, acc_override);
         }
         evm.db_mut().commit(state);
-        info!("executed tx, res: {:?}", result);
     }
     Ok(state_cache_builder.build())
 }
