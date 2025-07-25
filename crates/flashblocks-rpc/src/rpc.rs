@@ -12,6 +12,7 @@ use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::{Address, Sealable, TxHash, U256};
 use alloy_rpc_types::{BlockTransactions, Header};
 use alloy_rpc_types::{TransactionTrait};
+use alloy_rpc_types_eth::state::{EvmOverrides, StateOverride};
 use jsonrpsee::{
     core::{async_trait, RpcResult},
     proc_macros::rpc,
@@ -566,7 +567,7 @@ where
             let state_override = self
                 .cache
                 .get::<alloy_rpc_types_eth::state::StateOverride>(&CacheKey::PendingOverrides)
-                .unwrap();
+                .unwrap_or(StateOverride::default());
             overrides.state = Some(state_override);
             info!("Serve eth_call from override {:?}", overrides);
         }
