@@ -765,6 +765,7 @@ mod tests {
     use reth_provider::test_utils::MockEthProvider;
     use rollup_boost::primitives::{ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1};
     use std::str::FromStr;
+    use reth::providers::noop::NoopProvider;
 
     fn create_first_payload() -> FlashblocksPayloadV1 {
         // First payload (index 0) setup remains the same
@@ -914,7 +915,8 @@ mod tests {
 
     #[test]
     fn test_process_payload() {
-        let client = get_mock_provider();
+        let chain_spec = OpChainSpecBuilder::base_mainnet().build();
+        let client = NoopProvider::eth(Arc::new(chain_spec));
         let cache = Arc::new(Cache::default());
         let (receipt_sender, mut receipt_receiver) = broadcast::channel(100);
 
@@ -1061,7 +1063,7 @@ mod tests {
     #[test]
     fn test_skip_initial_non_zero_index_payload() {
         let chain_spec = OpChainSpecBuilder::base_mainnet().build();
-        let client = get_mock_provider();
+        let client = NoopProvider::eth(Arc::new(chain_spec));
         let cache = Arc::new(Cache::default());
         let (receipt_sender, _) = broadcast::channel(100);
 
@@ -1089,7 +1091,7 @@ mod tests {
     #[test]
     fn test_flash_block_tracking() {
         let chain_spec = OpChainSpecBuilder::base_mainnet().build();
-        let client = get_mock_provider();
+        let client = NoopProvider::eth(Arc::new(chain_spec));
         // Create cache
         let cache = Arc::new(Cache::default());
         let (receipt_sender, _) = broadcast::channel(100);
@@ -1161,44 +1163,34 @@ mod tests {
         assert_eq!(highest, 0);
     }
 
-    /// Create provide and push 1 block with transaction
-    fn get_mock_provider() -> MockEthProvider<EthPrimitives, OpChainSpec> {
-        let chain_spec = OpChainSpecBuilder::base_mainnet().build();
-        let client = MockEthProvider {
-            blocks: Default::default(),
-            headers: Default::default(),
-            receipts: Default::default(),
-            accounts: Default::default(),
-            chain_spec: Arc::new(chain_spec),
-            state_roots: Default::default(),
-            block_body_indices: Default::default(),
-            tx: Default::default(),
-            prune_modes: Default::default(),
-        };
-        let mut parent_hash = B256::default();
-        let header = Header {
-            number: 1,
-            gas_limit: 60_000_000,
-            gas_used: 0,
-            base_fee_per_gas: Some(1000),
-            parent_hash,
-            ..Default::default()
-        };
-        let transaction = TransactionSigned::new_unhashed(
-            Transaction::Legacy(Default::default()),
-            Signature::test_signature(),
-        );
-        let transactions = vec![transaction];
-        client.add_block(
-            parent_hash,
-            Block {
-                header: header.clone(),
-                body: BlockBody {
-                    transactions,
-                    ..Default::default()
-                },
-            },
-        );
-        client
-    }
+    // /// Create provide and push 1 block with transaction
+    // fn get_mock_provider() -> MockEthProvider<EthPrimitives, OpChainSpec> {
+    //     let chain_spec = OpChainSpecBuilder::base_mainnet().build();
+    //     let client = NoopProvider::eth(Arc::new(chain_spec));
+    //     let mut parent_hash = B256::default();
+    //     let header = Header {
+    //         number: 1,
+    //         gas_limit: 60_000_000,
+    //         gas_used: 0,
+    //         base_fee_per_gas: Some(1000),
+    //         parent_hash,
+    //         ..Default::default()
+    //     };
+    //     let transaction = TransactionSigned::new_unhashed(
+    //         Transaction::Legacy(Default::default()),
+    //         Signature::test_signature(),
+    //     );
+    //     let transactions = vec![transaction];
+    //     client.add_block(
+    //         parent_hash,
+    //         Block {
+    //             header: header.clone(),
+    //             body: BlockBody {
+    //                 transactions,
+    //                 ..Default::default()
+    //             },
+    //         },
+    //     );
+    //     client
+    // }
 }

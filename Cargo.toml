@@ -20,18 +20,18 @@ base-reth-flashblocks-rpc = { path = "crates/flashblocks-rpc" }
 base-reth-node = { path = "crates/node" }
 
 # reth
-reth = { git = "https://github.com/paradigmxyz/reth", rev = "f0ea0f2f0625e759b64fc359d8807d9ad319c8d4" }
-reth-optimism-node = { git = "https://github.com/paradigmxyz/reth", rev = "f0ea0f2f0625e759b64fc359d8807d9ad319c8d4" }
-reth-optimism-cli = { git = "https://github.com/paradigmxyz/reth", rev = "f0ea0f2f0625e759b64fc359d8807d9ad319c8d4" }
-reth-primitives = { git = "https://github.com/paradigmxyz/reth", rev = "f0ea0f2f0625e759b64fc359d8807d9ad319c8d4" }
-reth-rpc-eth-api = { git = "https://github.com/paradigmxyz/reth", rev = "f0ea0f2f0625e759b64fc359d8807d9ad319c8d4" }
-reth-optimism-primitives = { git = "https://github.com/paradigmxyz/reth", rev = "f0ea0f2f0625e759b64fc359d8807d9ad319c8d4" }
-reth-rpc-convert = { git = "https://github.com/paradigmxyz/reth", rev = "f0ea0f2f0625e759b64fc359d8807d9ad319c8d4" }
-reth-optimism-rpc = { git = "https://github.com/paradigmxyz/reth", rev = "f0ea0f2f0625e759b64fc359d8807d9ad319c8d4" }
-reth-optimism-evm = { git = "https://github.com/paradigmxyz/reth", rev = "f0ea0f2f0625e759b64fc359d8807d9ad319c8d4" }
-reth-optimism-chainspec = { git = "https://github.com/paradigmxyz/reth", rev = "f0ea0f2f0625e759b64fc359d8807d9ad319c8d4" }
-reth-provider = { git = "https://github.com/paradigmxyz/reth", rev = "f0ea0f2f0625e759b64fc359d8807d9ad319c8d4" }
-reth-evm = { git = "https://github.com/paradigmxyz/reth", rev = "f0ea0f2f0625e759b64fc359d8807d9ad319c8d4" }
+reth = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0"}
+reth-optimism-node = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0"}
+reth-optimism-cli = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0"}
+reth-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0"}
+reth-rpc-eth-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0"}
+reth-optimism-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0"}
+reth-rpc-convert = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0"}
+reth-optimism-rpc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0"}
+reth-optimism-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0"}
+reth-optimism-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0"}
+reth-provider = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0"}
+reth-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0"}
 
 # revm
 revm = { version = "27.0.3", default-features = false }
