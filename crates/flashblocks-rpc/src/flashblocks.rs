@@ -757,15 +757,10 @@ mod tests {
     use alloy_consensus::{Receipt, TxReceipt};
     use alloy_primitives::{Address, Signature, B256, U256};
     use alloy_rpc_types_engine::PayloadId;
-    use reth::primitives::{EthPrimitives, Transaction, TransactionSigned};
-    use reth_evm::op_revm::transaction::abstraction::OpTransactionBuilder;
-    use reth_evm::op_revm::OpTransaction;
+    use reth::providers::noop::NoopProvider;
     use reth_optimism_chainspec::OpChainSpecBuilder;
-    use reth_primitives::{Block, BlockBody};
-    use reth_provider::test_utils::MockEthProvider;
     use rollup_boost::primitives::{ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1};
     use std::str::FromStr;
-    use reth::providers::noop::NoopProvider;
 
     fn create_first_payload() -> FlashblocksPayloadV1 {
         // First payload (index 0) setup remains the same

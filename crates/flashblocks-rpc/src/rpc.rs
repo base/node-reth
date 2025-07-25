@@ -10,9 +10,8 @@ use alloy_consensus::TxReceipt;
 use alloy_consensus::{transaction::Recovered, transaction::TransactionInfo};
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::{Address, Sealable, TxHash, U256};
+use alloy_rpc_types::TransactionTrait;
 use alloy_rpc_types::{BlockTransactions, Header};
-use alloy_rpc_types::{TransactionTrait};
-use alloy_rpc_types_eth::state::{EvmOverrides, StateOverride};
 use jsonrpsee::{
     core::{async_trait, RpcResult},
     proc_macros::rpc,
@@ -559,9 +558,9 @@ where
         transaction: OpTransactionRequest,
         block_number: Option<BlockId>,
     ) -> RpcResult<alloy_primitives::Bytes> {
-        // Check if this is a call to the pending block
         let block_id = block_number.unwrap_or_default();
         let mut overrides = alloy_rpc_types_eth::state::EvmOverrides::default();
+        // If the call is to pending block use cached override (if they exist)
         if block_id.is_pending() {
             self.metrics.call.increment(1);
             overrides.state = self
