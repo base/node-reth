@@ -564,12 +564,9 @@ where
         let mut overrides = alloy_rpc_types_eth::state::EvmOverrides::default();
         if block_id.is_pending() {
             self.metrics.call.increment(1);
-            let state_override = self
+            overrides.state = self
                 .cache
-                .get::<alloy_rpc_types_eth::state::StateOverride>(&CacheKey::PendingOverrides)
-                .unwrap_or(StateOverride::default());
-            overrides.state = Some(state_override);
-            info!("Serve eth_call from override {:?}", overrides);
+                .get::<alloy_rpc_types_eth::state::StateOverride>(&CacheKey::PendingOverrides);
         }
         // Delegate to the underlying eth_api
         EthCall::call(&self.eth_api, transaction, block_number, overrides)
