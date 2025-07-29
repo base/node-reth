@@ -234,7 +234,7 @@ mod tests {
         }
 
         // We ensure that eth_call will succeed because we are on plain state
-        let eth_call = OpTransactionRequest::default()
+        let txn_request = OpTransactionRequest::default()
             .from(address!("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"))
             .transaction_type(0)
             .gas_limit(200000)
@@ -242,11 +242,18 @@ mod tests {
             .to(address!("0xf39635f2adf40608255779ff742afe13de31f577"))
             .value(U256::from(9999999999849942300000u128))
             .input(TransactionInput::new(bytes!("0x")));
-        let res = provider
-            .call(eth_call)
+
+        let eth_call_res = provider
+            .call(txn_request.clone())
             .block(BlockNumberOrTag::Pending.into())
             .await;
-        assert!(res.is_ok());
+        assert!(eth_call_res.is_ok());
+
+        let eth_estimate_gas_res = provider
+            .estimate_gas(txn_request.clone())
+            .block(BlockNumberOrTag::Pending.into())
+            .await;
+        assert!(eth_estimate_gas_res.is_ok());
 
         tokio::time::sleep(Duration::from_secs(3)).await;
         // Query second subblock, now there should be 4 transactions
@@ -309,20 +316,32 @@ mod tests {
 
         // We included heavy spending transaction and now don't have enough funds for this request, so
         // this eth_call with fail
-        let eth_call = OpTransactionRequest::default()
+        let txn_request_2 = OpTransactionRequest::default()
             .from(address!("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"))
             .transaction_type(0)
             .gas_limit(20000000)
-            .nonce(4)
+            .nonce(3)
             .to(address!("0xf39635f2adf40608255779ff742afe13de31f577"))
             .value(U256::from(9999999999849942300000u128))
             .input(TransactionInput::new(bytes!("0x")));
-        let res = provider
-            .call(eth_call)
+        let eth_call_res = provider
+            .call(txn_request_2.clone())
             .block(BlockNumberOrTag::Pending.into())
             .await;
-        assert!(res.is_err());
-        assert!(res
+        assert!(eth_call_res.is_err());
+        assert!(eth_call_res
+            .unwrap_err()
+            .as_error_resp()
+            .unwrap()
+            .message
+            .contains("insufficient funds for gas"));
+
+        let eth_estimate_gas_res = provider
+            .estimate_gas(txn_request_2.clone())
+            .block(BlockNumberOrTag::Pending.into())
+            .await;
+        assert!(eth_estimate_gas_res.is_err());
+        assert!(eth_estimate_gas_res
             .unwrap_err()
             .as_error_resp()
             .unwrap()

@@ -32,4 +32,7 @@ pub struct Metrics {
 
     #[metric(describe = "Count of times flashblocks call is called")]
     pub call: Counter,
+
+    #[metric(describe = "Count of times flashblocks estimate_gas is called")]
+    pub estimate_gas: Counter,
 }
