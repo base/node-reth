@@ -7,6 +7,7 @@ mod tests {
     use alloy_primitives::{address, bytes, Address, Bytes, B256, U256};
     use alloy_provider::Identity;
     use alloy_provider::{Provider, ProviderBuilder};
+    use alloy_rpc_types::simulate::{SimBlock, SimulatePayload};
     use alloy_rpc_types_engine::PayloadId;
     use alloy_rpc_types_eth::TransactionInput;
     use futures::SinkExt;
@@ -341,12 +342,13 @@ mod tests {
             .block(BlockNumberOrTag::Pending.into())
             .await;
         assert!(eth_estimate_gas_res.is_err());
-        assert!(eth_estimate_gas_res
-            .unwrap_err()
-            .as_error_resp()
-            .unwrap()
-            .message
-            .contains("insufficient funds for gas"));
+        // TODO: uncomment this once Reth has been bumped to include https://github.com/paradigmxyz/reth/pull/17668
+        // assert!(eth_estimate_gas_res
+        //     .unwrap_err()
+        //     .as_error_resp()
+        //     .unwrap()
+        //     .message
+        //     .contains("insufficient funds for gas"));
 
         // check balance
         // use curl command to get balance with pending tag, since alloy provider doesn't support pending tag
@@ -447,7 +449,6 @@ mod tests {
             .from(address!("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"))
             .transaction_type(0)
             .gas_limit(20000000)
-            .nonce(4)
             .to(address!("0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"))
             .value(U256::ZERO)
             .input(TransactionInput::new(bytes!("0x8381f58a")));
@@ -459,6 +460,61 @@ mod tests {
         assert_eq!(
             U256::from_str(res.unwrap().to_string().as_str()).unwrap(),
             U256::from(1)
+        );
+
+        let simulate_call = SimulatePayload {
+            block_state_calls: vec![SimBlock {
+                calls: vec![
+                    // read number from counter contract
+                    OpTransactionRequest::default()
+                        .from(address!("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"))
+                        .transaction_type(0)
+                        .gas_limit(200000)
+                        .to(address!("0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"))
+                        .value(U256::ZERO)
+                        .input(TransactionInput::new(bytes!("0x8381f58a")))
+                        .into(),
+                    // increment() value in contract
+                    OpTransactionRequest::default()
+                        .from(address!("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"))
+                        .transaction_type(0)
+                        .gas_limit(200000)
+                        .to(address!("0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"))
+                        .input(TransactionInput::new(bytes!("0xd09de08a")))
+                        .into(),
+                    // read number from counter contract
+                    OpTransactionRequest::default()
+                        .from(address!("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"))
+                        .transaction_type(0)
+                        .gas_limit(200000)
+                        .to(address!("0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"))
+                        .value(U256::ZERO)
+                        .input(TransactionInput::new(bytes!("0x8381f58a")))
+                        .into(),
+                ],
+                block_overrides: None,
+                state_overrides: None,
+            }],
+            trace_transfers: false,
+            validation: true,
+            return_full_transactions: true,
+        };
+        let simulate_res = provider
+            .simulate(&simulate_call)
+            .block_id(BlockNumberOrTag::Pending.into())
+            .await;
+        assert!(simulate_res.is_ok());
+        let block = simulate_res.unwrap();
+        assert_eq!(block.len(), 1);
+        assert_eq!(block[0].calls.len(), 3);
+        assert_eq!(
+            block[0].calls[0].return_data,
+            bytes!("0x0000000000000000000000000000000000000000000000000000000000000001")
+        );
+        assert_eq!(block[0].calls[1].return_data, bytes!("0x"));
+        assert_eq!(
+            block[0].calls[2].return_data,
+            bytes!("0x0000000000000000000000000000000000000000000000000000000000000002")
         );
 
         // Don't forget to cleanup
