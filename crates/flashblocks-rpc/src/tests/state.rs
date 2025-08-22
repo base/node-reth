@@ -5,27 +5,33 @@ mod tests {
     use crate::subscription::{Flashblock, FlashblocksReceiver, Metadata};
     use crate::tests::{BLOCK_INFO_TXN, BLOCK_INFO_TXN_HASH};
     use alloy_consensus::crypto::secp256k1::public_key_to_address;
-    use alloy_consensus::Receipt;
+    use alloy_consensus::{BlockHeader, Receipt};
     use alloy_consensus::{Header, Transaction};
-    use alloy_eips::{BlockHashOrNumber, Encodable2718};
-    use alloy_genesis::{Genesis, GenesisAccount};
+    use alloy_eips::{BlockHashOrNumber, Decodable2718, Encodable2718};
+    use alloy_genesis::GenesisAccount;
     use alloy_primitives::map::foldhash::HashMap;
     use alloy_primitives::{Address, BlockNumber, Bytes, B256, U256};
     use alloy_provider::network::BlockResponse;
     use alloy_rpc_types_engine::PayloadId;
     use op_alloy_consensus::OpDepositReceipt;
     use reth::builder::NodeTypesWithDBAdapter;
-    use reth::chainspec::Chain;
-    use reth::providers::{AccountReader, BlockNumReader, BlockReader};
+    use reth::chainspec::ChainSpecProvider;
+    use reth::providers::{
+        AccountReader, BlockNumReader, BlockReader, BlockWriter, ExecutionOutcome,
+    };
+    use reth::revm::database::StateProviderDatabase;
     use reth::transaction_pool::test_utils::TransactionBuilder;
     use reth_db::{test_utils::TempDatabase, DatabaseEnv};
-    use reth_optimism_chainspec::OpChainSpecBuilder;
+    use reth_evm::execute::Executor;
+    use reth_evm::ConfigureEvm;
+    use reth_optimism_chainspec::{OpChainSpecBuilder, BASE_MAINNET};
+    use reth_optimism_evm::OpEvmConfig;
     use reth_optimism_node::OpNode;
-    use reth_optimism_primitives::{OpBlock, OpBlockBody, OpReceipt};
-    use reth_primitives::TransactionSigned;
+    use reth_optimism_primitives::{OpBlock, OpBlockBody, OpReceipt, OpTransactionSigned};
     use reth_primitives_traits::{Account, Block, RecoveredBlock, SealedHeader};
     use reth_provider::providers::BlockchainProvider;
     use reth_provider::test_utils::create_test_provider_factory_with_node_types;
+    use reth_provider::{LatestStateProviderRef, ProviderFactory};
     use rollup_boost::{ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1};
     use std::sync::Arc;
 
@@ -36,12 +42,12 @@ mod tests {
         Charlie,
     }
 
+    type NodeTypes = NodeTypesWithDBAdapter<OpNode, Arc<TempDatabase<DatabaseEnv>>>;
+
     struct TestHarness {
-        flashblocks: FlashblocksState<
-            BlockchainProvider<NodeTypesWithDBAdapter<OpNode, Arc<TempDatabase<DatabaseEnv>>>>,
-        >,
-        provider:
-            BlockchainProvider<NodeTypesWithDBAdapter<OpNode, Arc<TempDatabase<DatabaseEnv>>>>,
+        flashblocks: FlashblocksState<BlockchainProvider<NodeTypes>>,
+        provider: BlockchainProvider<NodeTypes>,
+        factory: ProviderFactory<NodeTypes>,
 
         user_to_address: HashMap<User, Address>,
         user_to_private_key: HashMap<User, B256>,
@@ -84,14 +90,80 @@ mod tests {
             from: User,
             to: User,
             amount: u128,
-        ) -> TransactionSigned {
-            TransactionBuilder::default()
+        ) -> OpTransactionSigned {
+            let txn = TransactionBuilder::default()
                 .signer(self.signer(from))
                 .to(self.address(to))
                 .nonce(self.account_state(from).nonce)
                 .value(amount)
                 .gas_limit(21_000)
                 .into_eip1559()
+                .as_eip1559()
+                .unwrap()
+                .clone();
+
+            OpTransactionSigned::Eip1559(txn)
+        }
+
+        fn new_canonical_block(&self, mut user_transactions: Vec<OpTransactionSigned>) {
+            let current_tip = self.current_canonical_block();
+
+            let deposit_transaction =
+                OpTransactionSigned::decode_2718_exact(BLOCK_INFO_TXN.iter().as_slice()).unwrap();
+
+            let mut transactions: Vec<OpTransactionSigned> = vec![deposit_transaction];
+            transactions.append(&mut user_transactions);
+
+            let block = OpBlock::new_sealed(
+                SealedHeader::new_unhashed(Header {
+                    parent_beacon_block_root: Some(current_tip.hash()),
+                    parent_hash: current_tip.hash(),
+                    number: current_tip.number() + 1,
+                    timestamp: current_tip.header().timestamp() + 2,
+                    gas_limit: current_tip.header().gas_limit(),
+                    ..Header::default()
+                }),
+                OpBlockBody {
+                    transactions,
+                    ommers: vec![],
+                    withdrawals: None,
+                },
+            )
+            .try_recover()
+            .expect("able to recover block");
+
+            let provider = self.factory.provider().unwrap();
+
+            // Execute the block to produce a block execution output
+            let mut block_execution_output = OpEvmConfig::optimism(self.provider.chain_spec())
+                .batch_executor(StateProviderDatabase::new(LatestStateProviderRef::new(
+                    &provider,
+                )))
+                .execute(&block)
+                .unwrap();
+
+            block_execution_output.state.reverts.sort();
+
+            let execution_outcome = ExecutionOutcome {
+                bundle: block_execution_output.state.clone(),
+                receipts: vec![block_execution_output.receipts.clone()],
+                first_block: block.number,
+                requests: vec![block_execution_output.requests.clone()],
+            };
+
+            // Commit the block's execution outcome to the database
+            let provider_rw = self.factory.provider_rw().unwrap();
+            provider_rw
+                .append_blocks_with_state(
+                    vec![block.clone()],
+                    &execution_outcome,
+                    Default::default(),
+                    Default::default(),
+                )
+                .unwrap();
+            provider_rw.commit().unwrap();
+
+            self.flashblocks.on_canonical_block_received(&block);
         }
 
         fn new() -> Arc<Self> {
@@ -119,20 +191,24 @@ mod tests {
                 ),
             ];
 
-            let genesis = Genesis::default()
-                .with_gas_limit(100_000_000)
-                .extend_accounts(items);
+            let genesis = BASE_MAINNET
+                .genesis
+                .clone()
+                .extend_accounts(items)
+                .with_gas_limit(100_000_000);
 
-            let factory = create_test_provider_factory_with_node_types::<OpNode>(Arc::new(
-                OpChainSpecBuilder::default()
-                    .chain(Chain::dev())
-                    .genesis(genesis)
-                    .build(),
-            ));
+            let chain_spec = OpChainSpecBuilder::base_mainnet()
+                .genesis(genesis)
+                .isthmus_activated()
+                .build();
+
+            let factory =
+                create_test_provider_factory_with_node_types::<OpNode>(Arc::new(chain_spec));
 
             assert!(reth_db_common::init::init_genesis(&factory).is_ok());
 
-            let provider = BlockchainProvider::new(factory).expect("able to setup provider");
+            let provider =
+                BlockchainProvider::new(factory.clone()).expect("able to setup provider");
 
             let block = provider
                 .block(BlockHashOrNumber::Number(0))
@@ -146,6 +222,7 @@ mod tests {
             flashblocks.on_canonical_block_received(&block);
 
             Arc::new(Self {
+                factory,
                 flashblocks,
                 provider,
                 user_to_address: {
@@ -180,7 +257,7 @@ mod tests {
                 canonical_block_number: None,
                 transactions: vec![BLOCK_INFO_TXN],
                 receipts: {
-                    let mut receipts = alloy_primitives::map::HashMap::default();
+                    let mut receipts = HashMap::default();
                     receipts.insert(
                         BLOCK_INFO_TXN_HASH,
                         OpReceipt::Deposit(OpDepositReceipt {
@@ -214,7 +291,7 @@ mod tests {
             self
         }
 
-        pub fn with_transactions(&mut self, transactions: Vec<TransactionSigned>) -> &mut Self {
+        pub fn with_transactions(&mut self, transactions: Vec<OpTransactionSigned>) -> &mut Self {
             assert_ne!(self.index, 0, "Cannot set txns for initial flashblock");
             self.transactions.clear();
 
@@ -505,5 +582,37 @@ mod tests {
         let block_two = test.flashblocks.get_block(true);
 
         assert_eq!(block, block_two);
+    }
+
+    #[test]
+    fn test_progress_canonical_blocks_without_flashblocks() {
+        reth_tracing::init_test_tracing();
+        let test = TestHarness::new();
+
+        let genesis_block = test.current_canonical_block();
+        assert_eq!(genesis_block.number, 0);
+        assert_eq!(genesis_block.transaction_count(), 0);
+        assert!(test.flashblocks.get_block(true).is_none());
+
+        test.new_canonical_block(vec![test.build_transaction_to_send_eth(
+            User::Alice,
+            User::Bob,
+            100,
+        )]);
+
+        let block_one = test.current_canonical_block();
+        assert_eq!(block_one.number, 1);
+        assert_eq!(block_one.transaction_count(), 2);
+        assert!(test.flashblocks.get_block(true).is_none());
+
+        test.new_canonical_block(vec![
+            test.build_transaction_to_send_eth(User::Bob, User::Charlie, 100),
+            test.build_transaction_to_send_eth(User::Charlie, User::Alice, 1000),
+        ]);
+
+        let block_one = test.current_canonical_block();
+        assert_eq!(block_one.number, 2);
+        assert_eq!(block_one.transaction_count(), 3);
+        assert!(test.flashblocks.get_block(true).is_none());
     }
 }
