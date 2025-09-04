@@ -1,4 +1,4 @@
-use std::{io::Read, sync::Arc};
+use std::{io::Read};
 
 use alloy_primitives::map::foldhash::HashMap;
 use alloy_primitives::{Address, B256, U256};
@@ -17,7 +17,7 @@ use url::Url;
 use crate::metrics::Metrics;
 
 pub trait FlashblocksReceiver {
-    fn on_flashblock_received(&self, flashblock: Flashblock);
+    fn on_flashblock_received(&mut self, flashblock: Flashblock);
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -51,16 +51,16 @@ enum ActorMessage {
 }
 
 pub struct FlashblocksSubscriber<Receiver> {
-    flashblocks_state: Arc<Receiver>,
+    flashblocks_state: Receiver,
     metrics: Metrics,
     ws_url: Url,
 }
 
 impl<Receiver> FlashblocksSubscriber<Receiver>
 where
-    Receiver: FlashblocksReceiver + Send + Sync + 'static,
+    Receiver: FlashblocksReceiver + Send + Sync + Clone + 'static,
 {
-    pub fn new(flashblocks_state: Arc<Receiver>, ws_url: Url) -> Self {
+    pub fn new(flashblocks_state: Receiver, ws_url: Url) -> Self {
         Self {
             ws_url,
             flashblocks_state,
@@ -140,7 +140,7 @@ where
             }
         });
 
-        let flashblocks_state = self.flashblocks_state.clone();
+        let mut flashblocks_state = self.flashblocks_state.clone();
         tokio::spawn(async move {
             while let Some(message) = mailbox.recv().await {
                 match message {

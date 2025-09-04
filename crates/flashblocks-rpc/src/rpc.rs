@@ -1,4 +1,3 @@
-use std::sync::Arc;
 use std::time::Duration;
 
 use crate::metrics::Metrics;
@@ -101,12 +100,12 @@ pub trait EthApiOverride {
 #[derive(Debug)]
 pub struct EthApiExt<Eth, FB> {
     eth_api: Eth,
-    flashblocks_state: Arc<FB>,
+    flashblocks_state: FB,
     metrics: Metrics,
 }
 
 impl<Eth, FB> EthApiExt<Eth, FB> {
-    pub fn new(eth_api: Eth, flashblocks_state: Arc<FB>) -> Self {
+    pub fn new(eth_api: Eth, flashblocks_state: FB) -> Self {
         Self {
             eth_api,
             flashblocks_state,

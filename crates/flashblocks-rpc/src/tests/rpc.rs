@@ -128,7 +128,7 @@ mod tests {
             .extend_rpc_modules(move |ctx| {
                 // We are not going to use the websocket connection to send payloads so we use
                 // a dummy url.
-                let flashblocks_state = Arc::new(FlashblocksState::new(ctx.provider().clone()));
+                let mut flashblocks_state = FlashblocksState::new(ctx.provider().clone());
 
                 let api_ext =
                     EthApiExt::new(ctx.registry.eth_api().clone(), flashblocks_state.clone());

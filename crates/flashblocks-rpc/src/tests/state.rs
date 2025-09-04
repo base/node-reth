@@ -11,7 +11,6 @@ mod tests {
     use alloy_genesis::GenesisAccount;
     use alloy_primitives::map::foldhash::HashMap;
     use alloy_primitives::{Address, BlockNumber, Bytes, B256, U256};
-    use alloy_provider::network::BlockResponse;
     use alloy_rpc_types_engine::PayloadId;
     use op_alloy_consensus::OpDepositReceipt;
     use reth::builder::NodeTypesWithDBAdapter;
@@ -44,6 +43,7 @@ mod tests {
 
     type NodeTypes = NodeTypesWithDBAdapter<OpNode, Arc<TempDatabase<DatabaseEnv>>>;
 
+    #[derive(Clone)]
     struct TestHarness {
         flashblocks: FlashblocksState<BlockchainProvider<NodeTypes>>,
         provider: BlockchainProvider<NodeTypes>,
@@ -105,7 +105,7 @@ mod tests {
             OpTransactionSigned::Eip1559(txn)
         }
 
-        fn new_canonical_block(&self, mut user_transactions: Vec<OpTransactionSigned>) {
+        fn new_canonical_block(&mut self, mut user_transactions: Vec<OpTransactionSigned>) {
             let current_tip = self.current_canonical_block();
 
             let deposit_transaction =
@@ -166,7 +166,7 @@ mod tests {
             self.flashblocks.on_canonical_block_received(&block);
         }
 
-        fn new() -> Arc<Self> {
+        fn new() -> Self {
             let keys = reth_testing_utils::generators::generate_keys(&mut rand::rng(), 3);
             let alice_signer = keys[0];
             let bob_signer = keys[1];
@@ -217,11 +217,12 @@ mod tests {
                 .try_into_recovered()
                 .expect("able to recover block");
 
-            let flashblocks = FlashblocksState::new(provider.clone());
+            let mut flashblocks = FlashblocksState::new(provider.clone());
 
             flashblocks.on_canonical_block_received(&block);
+            flashblocks.reconcile();
 
-            Arc::new(Self {
+            Self {
                 factory,
                 flashblocks,
                 provider,
@@ -239,20 +240,20 @@ mod tests {
                     res.insert(User::Charlie, charli_signer.secret_bytes().into());
                     res
                 },
-            })
+            }
         }
     }
 
     struct FlashblockBuilder {
         transactions: Vec<Bytes>,
         receipts: HashMap<B256, OpReceipt>,
-        harness: Arc<TestHarness>,
+        harness: TestHarness,
         canonical_block_number: Option<BlockNumber>,
         index: u64,
     }
 
     impl FlashblockBuilder {
-        pub fn new_base(harness: &Arc<TestHarness>) -> Self {
+        pub fn new_base(harness: &TestHarness) -> Self {
             Self {
                 canonical_block_number: None,
                 transactions: vec![BLOCK_INFO_TXN],
@@ -276,7 +277,7 @@ mod tests {
                 harness: harness.clone(),
             }
         }
-        pub fn new(harness: &Arc<TestHarness>, index: u64) -> Self {
+        pub fn new(harness: &TestHarness, index: u64) -> Self {
             Self {
                 canonical_block_number: None,
                 transactions: Vec::new(),
@@ -365,10 +366,11 @@ mod tests {
     #[test]
     fn test_state_overrides_persisted_across_flashblocks() {
         reth_tracing::init_test_tracing();
-        let test = TestHarness::new();
+        let mut test = TestHarness::new();
 
         test.flashblocks
             .on_flashblock_received(FlashblockBuilder::new_base(&test).build());
+        test.flashblocks.reconcile();
 
         assert_eq!(
             test.flashblocks
@@ -395,6 +397,7 @@ mod tests {
                 )])
                 .build(),
         );
+        test.flashblocks.reconcile();
 
         let pending = test.flashblocks.get_block(true);
         assert!(pending.is_some());
@@ -418,6 +421,7 @@ mod tests {
 
         test.flashblocks
             .on_flashblock_received(FlashblockBuilder::new(&test, 2).build());
+        test.flashblocks.reconcile();
 
         let overrides = test
             .flashblocks
@@ -438,10 +442,11 @@ mod tests {
     #[test]
     fn test_missing_receipts_will_not_process() {
         reth_tracing::init_test_tracing();
-        let test = TestHarness::new();
+        let mut test = TestHarness::new();
 
         test.flashblocks
             .on_flashblock_received(FlashblockBuilder::new_base(&test).build());
+        test.flashblocks.reconcile();
 
         let current_block = test.flashblocks.get_block(true);
 
@@ -455,6 +460,7 @@ mod tests {
                 .with_receipts(HashMap::default()) // Clear the receipts
                 .build(),
         );
+        test.flashblocks.reconcile();
 
         let pending_block = test.flashblocks.get_block(true);
 
@@ -463,37 +469,16 @@ mod tests {
     }
 
     #[test]
-    fn test_flashblock_for_new_canonical_block_clears_older_flashblocks() {
-        reth_tracing::init_test_tracing();
-        let test = TestHarness::new();
-
-        test.flashblocks
-            .on_flashblock_received(FlashblockBuilder::new_base(&test).build());
-
-        let current_block = test.flashblocks.get_block(true).expect("should be a block");
-
-        assert_eq!(current_block.header().number, 1);
-        assert_eq!(current_block.transactions.len(), 1);
-
-        test.flashblocks.on_flashblock_received(
-            FlashblockBuilder::new(&test, 1)
-                .with_canonical_block_number(100)
-                .build(),
-        );
-
-        let current_block = test.flashblocks.get_block(true);
-        assert!(current_block.is_none());
-    }
-
-    #[test]
     fn test_non_sequential_payload_ignored() {
         reth_tracing::init_test_tracing();
-        let test = TestHarness::new();
+        let mut test = TestHarness::new();
 
+        test.flashblocks.reconcile();
         assert!(test.flashblocks.get_block(true).is_none());
 
         test.flashblocks
             .on_flashblock_received(FlashblockBuilder::new_base(&test).build());
+        test.flashblocks.reconcile();
 
         // Just the block info transaction
         assert_eq!(
@@ -514,6 +499,7 @@ mod tests {
                 )])
                 .build(),
         );
+        test.flashblocks.reconcile();
 
         // Still the block info transaction, the txns in the third payload are ignored as it's
         // missing a Flashblock
@@ -528,12 +514,13 @@ mod tests {
     }
 
     #[test]
-    fn test_canonical_block_clears_older_flashblocks() {
+    fn test_canonical_block_clears_older_pending_state() {
         reth_tracing::init_test_tracing();
-        let test = TestHarness::new();
+        let mut test = TestHarness::new();
 
         test.flashblocks
             .on_flashblock_received(FlashblockBuilder::new_base(&test).build());
+        test.flashblocks.reconcile();
 
         assert_eq!(
             test.flashblocks
@@ -554,6 +541,7 @@ mod tests {
         .expect("able to recover block");
 
         test.flashblocks.on_canonical_block_received(&block);
+        test.flashblocks.reconcile();
 
         // Flashblock is cleared, as canonical data is more recent
         assert!(test.flashblocks.get_block(true).is_none());
@@ -562,10 +550,11 @@ mod tests {
     #[test]
     fn test_duplicate_flashblock_ignored() {
         reth_tracing::init_test_tracing();
-        let test = TestHarness::new();
+        let mut test = TestHarness::new();
 
         test.flashblocks
             .on_flashblock_received(FlashblockBuilder::new_base(&test).build());
+        test.flashblocks.reconcile();
 
         let fb = FlashblockBuilder::new(&test, 1)
             .with_transactions(vec![test.build_transaction_to_send_eth(
@@ -576,9 +565,11 @@ mod tests {
             .build();
 
         test.flashblocks.on_flashblock_received(fb.clone());
+        test.flashblocks.reconcile();
         let block = test.flashblocks.get_block(true);
 
         test.flashblocks.on_flashblock_received(fb.clone());
+        test.flashblocks.reconcile();
         let block_two = test.flashblocks.get_block(true);
 
         assert_eq!(block, block_two);
@@ -587,7 +578,7 @@ mod tests {
     #[test]
     fn test_progress_canonical_blocks_without_flashblocks() {
         reth_tracing::init_test_tracing();
-        let test = TestHarness::new();
+        let mut test = TestHarness::new();
 
         let genesis_block = test.current_canonical_block();
         assert_eq!(genesis_block.number, 0);
@@ -599,6 +590,7 @@ mod tests {
             User::Bob,
             100,
         )]);
+        test.flashblocks.reconcile();
 
         let block_one = test.current_canonical_block();
         assert_eq!(block_one.number, 1);
@@ -615,4 +607,70 @@ mod tests {
         assert_eq!(block_one.transaction_count(), 3);
         assert!(test.flashblocks.get_block(true).is_none());
     }
+
+    // #[test]
+    // fn test_flashblocks_across_block_boundaries() {
+    //     todo!()
+    // }
+    //
+    // #[test]
+    // fn test_supports_multiple_pending_blocks() {
+    //     todo!()
+    // }
+    //
+    // #[test]
+    // fn test_two() {
+    //     todo!()
+    // }
+
+    /*
+    /// start todo: combine these into one mutex
+    /// Can get the mutex in reconcile, copy the latest and
+
+    /// Should always be in the correct order
+    /// If an older than latest (duplicate) or a Flashblock is skipped it wont be added
+    /// Added to by new flashblock, removed from by reconcile
+    flashblocks_to_process: Mutex<VecDeque<Flashblock>>
+
+    /// Latest canonical block, will only ever increment
+    /// Only written to by new canonical, read by reconcile
+    latest_canonical_block_number: Mutex<u64>
+    //// end todo: combine these into one mutex
+
+
+    //// TODO!!
+    1. Refactor code & tests for new flashblock & new canonical to push data and trigger reconcile
+    2. Flashblocks across boundaries (w/ infinite bloat)
+        1. Add reconcile state
+        2. Just always copy state over
+    3. Pruning state on canonical
+
+    - new flashblock
+        - append to FB queue, if it's the next flashblock
+        - trigger reconcile on a separate thread
+
+    - new canonical
+        - update current canonical number
+        - trigger reconcile on a separate thread
+
+    - reconcile loop
+        - wait for reconcile event
+            - run reconcile on received
+
+     - reconcile (2)
+        - on canonical (assuming greater than curr canonical)
+            - remove_overrides: Set<>
+            - for each pending block <= canonical
+                - check equal (hash root)
+                - if not equal, reset && break
+                - remove_overrides.append_all(pending block overrides)
+                - drop pending block
+
+            - for remaining pending
+                - go through and remove any overrides
+
+        - on flashblock (assuming next FB)
+            - for each flashblock process:
+
+     */
 }

@@ -32,22 +32,32 @@ use reth_rpc_convert::transaction::ConvertReceiptInput;
 use reth_rpc_convert::RpcTransaction;
 use reth_rpc_eth_api::{RpcBlock, RpcReceipt};
 use std::borrow::Cow;
+use std::collections::VecDeque;
 use std::ops::Deref;
-use std::sync::Arc;
-use std::time::Instant;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tokio::sync::broadcast;
 use tokio::sync::broadcast::Sender;
-use tracing::{debug, error, info};
+use tracing::{debug, error};
 
 // Buffer 4s of Flashblocks
 const BUFFER_SIZE: usize = 20;
 
 #[derive(Debug, Clone)]
+struct BuildingState {
+    latest_canonical_block: Option<RecoveredBlock<OpBlock>>,
+    flashblocks_to_process: VecDeque<Flashblock>,
+    last_flashblock_processed: (u64, u64),
+}
+
+#[derive(Debug, Clone)]
 pub struct FlashblocksState<Client> {
-    pending_block: Arc<ArcSwapOption<PendingBlock>>,
     flashblock_sender: Sender<Flashblock>,
     metrics: Metrics,
     client: Client,
+
+    pending_block: Arc<ArcSwapOption<PendingBlock>>,
+    state: Arc<Mutex<BuildingState>>,
 }
 
 impl<Client> FlashblocksState<Client>
@@ -63,14 +73,75 @@ where
             pending_block: Arc::new(ArcSwapOption::new(None)),
             flashblock_sender: broadcast::channel(BUFFER_SIZE).0,
             metrics: Metrics::default(),
+            state: Arc::new(Mutex::new(BuildingState {
+                latest_canonical_block: None,
+                flashblocks_to_process: VecDeque::new(),
+                last_flashblock_processed: (0, 0),
+            })),
             client,
         }
     }
 
-    pub fn on_canonical_block_received(&self, block: &RecoveredBlock<OpBlock>) {
-        if let Some(cur) = self.pending_block.load_full() {
-            if cur.block_number() <= block.number {
-                // clear the pending flashblockblock
+    pub fn start(&self) {
+        let mut this = self.clone();
+
+        tokio::spawn(async move {
+            loop {
+                this.reconcile();
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        });
+    }
+
+    pub(crate) fn reconcile(&mut self) {
+        let mut current_state = self.state.lock().unwrap();
+        let current_canonical = if let Some(block) = current_state.clone().latest_canonical_block {
+            block
+        } else {
+            return
+        };
+
+        let pending_block = self.pending_block.load_full();
+        let mut last_process_flashblock = (0, 0);
+
+        // TODO: Don't keep the lock for the current state while processing, this will drop flashblocks
+        // TODO: Support cross block state
+        for flashblock in current_state.flashblocks_to_process.iter() {
+            match pending_block.clone() {
+                Some(pending_block) => {
+                    if pending_block.get_block(true).number() == flashblock.metadata.block_number {
+                        let mut flashblocks = pending_block.get_flashblocks();
+                        flashblocks.push(flashblock.clone());
+                        self.update_pending_block(flashblocks);
+                    } else if flashblock.index == 0 {
+                        self.metrics
+                            .flashblocks_in_block
+                            .record((pending_block.flashblock_index() + 1) as f64);
+
+                        self.update_pending_block(vec![flashblock.clone()]);
+                    } else {
+                        debug!(message = "Unexpected Flashblock")
+                    }
+                }
+                None => {
+                    if flashblock.index == 0 {
+                        self.update_pending_block(vec![flashblock.clone()]);
+                    } else {
+                        debug!(message = "Non zero Flashblock")
+                    }
+                }
+            }
+
+            last_process_flashblock = (flashblock.metadata.block_number, flashblock.index);
+        }
+
+        current_state.last_flashblock_processed = last_process_flashblock;
+        current_state.flashblocks_to_process = VecDeque::new();
+
+        // Canonical is ahead of current Flashblocks, reset flashblocks and drop pending block
+        if let Some(cur) = pending_block {
+            if cur.block_number() <= current_canonical.number {
+                current_state.flashblocks_to_process = VecDeque::new();
                 if let Some(prev) = self.pending_block.swap(None) {
                     self.metrics.pending_clear_catchup.increment(1);
                     self.metrics
@@ -84,13 +155,8 @@ where
         }
     }
 
-    fn is_next_flashblock(
-        &self,
-        pending_block: &Arc<PendingBlock>,
-        flashblock: &Flashblock,
-    ) -> bool {
-        flashblock.metadata.block_number == pending_block.block_number()
-            && flashblock.index == pending_block.flashblock_index() + 1
+    pub fn on_canonical_block_received(&mut self, block: &RecoveredBlock<OpBlock>) {
+        self.state.lock().unwrap().latest_canonical_block = Some(block.clone());
     }
 
     fn update_pending_block(&self, flashblocks: Vec<Flashblock>) {
@@ -372,47 +438,42 @@ where
         + Clone
         + 'static,
 {
-    fn on_flashblock_received(&self, flashblock: Flashblock) {
-        match self.pending_block.load_full() {
-            Some(pending_block) => {
-                if flashblock.index == 0 {
-                    self.metrics
-                        .flashblocks_in_block
-                        .record((pending_block.flashblock_index() + 1) as f64);
-
-                    self.update_pending_block(vec![flashblock.clone()]);
-                } else if self.is_next_flashblock(&pending_block, &flashblock) {
-                    let mut flashblocks = pending_block.get_flashblocks();
-                    flashblocks.push(flashblock.clone());
-
-                    self.update_pending_block(flashblocks);
-                } else if pending_block.block_number() != flashblock.metadata.block_number {
-                    self.metrics.unexpected_block_order.increment(1);
-                    self.pending_block.swap(None);
-
-                    error!(
-                        message = "Received Flashblock for new block, zeroing Flashblocks until we receive a base Flashblock",
-                        curr_block = %pending_block.block_number(),
-                        new_block = %flashblock.metadata.block_number,
-                    );
+    fn on_flashblock_received(&mut self, flashblock: Flashblock) {
+        {
+            let mut state = self.state.lock().unwrap();
+            if let Some(prev_flashblock) = state.flashblocks_to_process.iter().last() {
+                // Next flashblock in block
+                if prev_flashblock.metadata.block_number == flashblock.metadata.block_number {
+                    if prev_flashblock.index + 1 == flashblock.index {
+                        state.flashblocks_to_process.push_back(flashblock.clone());
+                    } else {
+                        debug!(message = "non sequential flashblock due to index")
+                    }
+                // First flashblock of next block
+                } else if prev_flashblock.metadata.block_number + 1 == flashblock.metadata.block_number {
+                    if flashblock.index == 0 {
+                        state.flashblocks_to_process.push_back(flashblock.clone());
+                    } else {
+                        debug!(message = "first flashblock of block has non-zero index")
+                    }
                 } else {
-                    self.metrics.unexpected_block_order.increment(1);
-
-                    info!(
-                        message = "None sequential Flashblocks, keeping cache",
-                        curr_block = %pending_block.block_number(),
-                        new_block = %flashblock.metadata.block_number,
-                    );
+                    debug!(message = "non sequential flashblock due to canonical")
                 }
-            }
-            None => {
-                if flashblock.index == 0 {
-                    self.update_pending_block(vec![flashblock.clone()]);
+            } else {
+                // Next after one we processed
+                // TODO: Needs to handle cross block boundary
+                if flashblock.index >= 1 && state.last_flashblock_processed == (flashblock.metadata.block_number, flashblock.index - 1) {
+                    state.flashblocks_to_process.push_back(flashblock.clone());
+                }
+                // When there are no Flashblocks, only start processing from the start of a block.
+                else if flashblock.index == 0 {
+                    state.flashblocks_to_process.push_back(flashblock.clone());
                 } else {
                     debug!(message = "waiting for first Flashblock")
                 }
             }
         }
+
 
         _ = self.flashblock_sender.send(flashblock);
     }
