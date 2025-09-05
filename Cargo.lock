@@ -1626,6 +1626,7 @@ dependencies = [
  "tokio-stream",
  "tokio-tungstenite",
  "tracing",
+ "transaction-tracing",
  "url",
  "uuid",
 ]
@@ -11941,6 +11942,23 @@ dependencies = [
  "tracing-core",
  "tracing-log",
  "tracing-serde",
+]
+
+[[package]]
+name = "transaction-tracing"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "eyre",
+ "futures",
+ "reth",
+ "reth-exex",
+ "reth-optimism-cli",
+ "reth-optimism-node",
+ "reth-primitives",
+ "reth-tracing",
+ "tokio",
+ "tokio-stream",
 ]
 
 [[package]]
