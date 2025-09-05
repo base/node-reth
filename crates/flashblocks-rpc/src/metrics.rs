@@ -36,6 +36,14 @@ pub struct Metrics {
     #[metric(describe = "Count of times flashblocks call is called")]
     pub call: Counter,
 
+    // TODO: Remove this once estimate_gas is enabled
+    #[allow(dead_code)]
+    #[metric(describe = "Count of times flashblocks estimate_gas is called")]
+    pub estimate_gas: Counter,
+
+    #[metric(describe = "Count of times flashblocks simulate_v1 is called")]
+    pub simulate_v1: Counter,
+
     #[metric(
         describe = "Number of times pending snapshot was cleared because canonical caught up"
     )]
