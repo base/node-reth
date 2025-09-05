@@ -1,4 +1,4 @@
-use std::{io::Read, sync::Arc, time::Duration};
+use std::{io::Read, time::Duration};
 
 use alloy_primitives::map::foldhash::HashMap;
 use alloy_primitives::{Address, B256, U256};
