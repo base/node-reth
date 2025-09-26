@@ -11,6 +11,7 @@ use alloy_primitives::{Address, BlockNumber, Bytes, Sealable, TxHash, B256, U256
 use alloy_rpc_types::{TransactionTrait, Withdrawal};
 use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3};
 use alloy_rpc_types_eth::state::{AccountOverride, StateOverride, StateOverridesBuilder};
+use alloy_rpc_types_eth::{Filter, Log};
 use arc_swap::ArcSwapOption;
 use eyre::eyre;
 use op_alloy_consensus::OpTxEnvelope;
@@ -165,6 +166,14 @@ impl<Client> FlashblocksAPI for FlashblocksState<Client> {
             .load()
             .as_ref()
             .and_then(|pb| pb.get_state_overrides())
+    }
+
+    fn get_pending_logs(&self, filter: &Filter) -> Vec<Log> {
+        self.pending_blocks
+            .load()
+            .as_ref()
+            .map(|pb| pb.get_pending_logs(filter))
+            .unwrap_or_default()
     }
 }
 

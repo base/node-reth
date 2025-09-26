@@ -8,6 +8,7 @@ use alloy_primitives::{Address, TxHash, U256};
 use alloy_rpc_types::simulate::{SimBlock, SimulatePayload, SimulatedBlock};
 use alloy_rpc_types::state::{EvmOverrides, StateOverride, StateOverridesBuilder};
 use alloy_rpc_types::BlockOverrides;
+use alloy_rpc_types_eth::{Filter, Log};
 use jsonrpsee::{
     core::{async_trait, RpcResult},
     proc_macros::rpc,
@@ -17,11 +18,12 @@ use jsonrpsee_types::ErrorObjectOwned;
 use op_alloy_network::Optimism;
 use op_alloy_rpc_types::OpTransactionRequest;
 use reth::providers::CanonStateSubscriptions;
+use reth::rpc::eth::EthFilter;
 use reth::rpc::server_types::eth::EthApiError;
 use reth_rpc_eth_api::helpers::EthState;
 use reth_rpc_eth_api::helpers::EthTransactions;
 use reth_rpc_eth_api::helpers::{EthBlocks, EthCall};
-use reth_rpc_eth_api::{helpers::FullEthApi, RpcBlock};
+use reth_rpc_eth_api::{helpers::FullEthApi, EthApiTypes, EthFilterApiServer, RpcBlock};
 use reth_rpc_eth_api::{RpcReceipt, RpcTransaction};
 use tokio::sync::broadcast;
 use tokio::sync::broadcast::error::RecvError;
@@ -54,6 +56,9 @@ pub trait FlashblocksAPI {
     fn subscribe_to_flashblocks(&self) -> broadcast::Receiver<Flashblock>;
 
     fn get_state_overrides(&self) -> Option<StateOverride>;
+
+    /// Gets logs from pending state matching the provided filter.
+    fn get_pending_logs(&self, filter: &Filter) -> Vec<Log>;
 }
 
 #[cfg_attr(not(test), rpc(server, namespace = "eth"))]
@@ -119,19 +124,24 @@ pub trait EthApiOverride {
         opts: SimulatePayload<OpTransactionRequest>,
         block_number: Option<BlockId>,
     ) -> RpcResult<Vec<SimulatedBlock<RpcBlock<Optimism>>>>;
+
+    #[method(name = "getLogs")]
+    async fn get_logs(&self, filter: Filter) -> RpcResult<Vec<Log>>;
 }
 
 #[derive(Debug)]
-pub struct EthApiExt<Eth, FB> {
+pub struct EthApiExt<Eth: EthApiTypes, FB> {
     eth_api: Eth,
+    eth_filter: EthFilter<Eth>,
     flashblocks_state: Arc<FB>,
     metrics: Metrics,
 }
 
-impl<Eth, FB> EthApiExt<Eth, FB> {
-    pub fn new(eth_api: Eth, flashblocks_state: Arc<FB>) -> Self {
+impl<Eth: EthApiTypes, FB> EthApiExt<Eth, FB> {
+    pub fn new(eth_api: Eth, eth_filter: EthFilter<Eth>, flashblocks_state: Arc<FB>) -> Self {
         Self {
             eth_api,
+            eth_filter,
             flashblocks_state,
             metrics: Metrics::default(),
         }
@@ -430,6 +440,24 @@ where
             .await
             .map_err(Into::into)
     }
+
+    async fn get_logs(&self, filter: Filter) -> RpcResult<Vec<Log>> {
+        debug!(
+            message = "rpc::get_logs",
+            address = ?filter.address
+        );
+
+        // Only handle pure pending queries: fromBlock="pending" and toBlock="pending"
+        // Everything else goes to regular eth API
+        if self.is_pending_query(&filter) {
+            self.metrics.get_logs.increment(1);
+            let pending_logs = self.flashblocks_state.get_pending_logs(&filter);
+            Ok(pending_logs)
+        } else {
+            // All other queries - delegate to underlying reth node
+            self.eth_filter.logs(filter).await
+        }
+    }
 }
 
 impl<Eth, FB> EthApiExt<Eth, FB>
@@ -437,6 +465,25 @@ where
     Eth: FullEthApi<NetworkTypes = Optimism> + Send + Sync + 'static,
     FB: FlashblocksAPI + Send + Sync + 'static,
 {
+    fn is_pending_query(&self, filter: &Filter) -> bool {
+        // Only return true for pure pending queries: both fromBlock and toBlock must be "pending"
+        match &filter.block_option {
+            alloy_rpc_types_eth::FilterBlockOption::Range {
+                from_block,
+                to_block,
+            } => {
+                matches!(
+                    (from_block, to_block),
+                    (
+                        Some(BlockNumberOrTag::Pending),
+                        Some(BlockNumberOrTag::Pending)
+                    )
+                )
+            }
+            _ => false, // Block hash queries or other formats are not pure pending
+        }
+    }
+
     async fn wait_for_flashblocks_receipt(&self, tx_hash: TxHash) -> Option<RpcReceipt<Optimism>> {
         let mut receiver = self.flashblocks_state.subscribe_to_flashblocks();
 
