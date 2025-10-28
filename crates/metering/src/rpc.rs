@@ -156,8 +156,8 @@ where
             results: result.results,
             state_block_number: header.number,
             total_gas_used: result.total_gas_used,
-            // TODO: Include the state root calculation time as an independent value in the MeterBundleResponse
             total_execution_time_us: result.total_execution_time_us,
+            state_root_time_us: result.state_root_time_us,
         })
     }
 }
