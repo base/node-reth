@@ -4195,7 +4195,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "system-configuration",
  "tokio",
  "tower-service",
@@ -4230,7 +4230,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.62.2",
+ "windows-core 0.57.0",
 ]
 
 [[package]]
@@ -6717,7 +6717,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash 2.1.1",
  "rustls",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "thiserror 2.0.17",
  "tokio",
  "tracing",
@@ -6754,7 +6754,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "tracing",
  "windows-sys 0.60.2",
 ]
@@ -12500,7 +12500,7 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 [[package]]
 name = "tips-core"
 version = "0.1.0"
-source = "git+https://github.com/base/tips?rev=27674ae051a86033ece61ae24434aeacdb28ce73#27674ae051a86033ece61ae24434aeacdb28ce73"
+source = "git+https://github.com/base/tips?rev=e59327bec565808e0505d3fb3a64749dfc61a41a#e59327bec565808e0505d3fb3a64749dfc61a41a"
 dependencies = [
  "alloy-consensus",
  "alloy-primitives",
@@ -13474,7 +13474,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
