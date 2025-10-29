@@ -35,8 +35,12 @@ alloy-eips.workspace = true
 # op-alloy
 op-alloy-consensus.workspace = true
 
+# base
+base-reth-flashblocks-rpc = { path = "../flashblocks-rpc" }
+
 # revm
 revm.workspace = true
+revm-database.workspace = true
 
 # rpc
 jsonrpsee.workspace = true
