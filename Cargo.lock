@@ -1559,6 +1559,7 @@ dependencies = [
  "alloy-genesis",
  "alloy-primitives",
  "alloy-rpc-client",
+ "base-reth-flashblocks-rpc",
  "eyre",
  "jsonrpsee 0.26.0",
  "op-alloy-consensus 0.20.0",

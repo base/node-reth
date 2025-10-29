@@ -1,7 +1,7 @@
 use alloy_consensus::{transaction::SignerRecoverable, BlockHeader, Transaction as _};
 use alloy_primitives::{B256, U256};
 use eyre::{eyre, Result as EyreResult};
-use reth::revm::db::State;
+use reth::revm::db::{Cache, CacheDB, State};
 use reth_evm::execute::BlockBuilder;
 use reth_evm::ConfigureEvm;
 use reth_optimism_chainspec::OpChainSpec;
@@ -43,6 +43,7 @@ pub fn meter_bundle<SP>(
     decoded_txs: Vec<op_alloy_consensus::OpTxEnvelope>,
     header: &SealedHeader,
     bundle_with_metadata: &tips_core::types::BundleWithMetadata,
+    db_cache: Option<Cache>,
 ) -> EyreResult<MeterBundleOutput>
 where
     SP: reth_provider::StateProvider,
@@ -50,10 +51,26 @@ where
     // Get bundle hash from BundleWithMetadata
     let bundle_hash = bundle_with_metadata.bundle_hash();
 
-    // Create state database
+    // Create state database with optional flashblocks cache
     let state_db = reth::revm::database::StateProviderDatabase::new(state_provider);
-    let mut db = State::builder()
+    let base_state = State::builder()
         .with_database(state_db)
+        .with_bundle_update()
+        .build();
+
+    // If we have flashblocks cache, wrap with CacheDB to apply pending changes
+    let cache_db = if let Some(cache) = db_cache {
+        CacheDB {
+            cache,
+            db: base_state,
+        }
+    } else {
+        CacheDB::new(base_state)
+    };
+
+    // Wrap the CacheDB in a State for the EVM builder
+    let mut db = State::builder()
+        .with_database(cache_db)
         .with_bundle_update()
         .build();
 

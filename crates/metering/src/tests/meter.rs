@@ -161,6 +161,7 @@ fn meter_bundle_empty_transactions() -> eyre::Result<()> {
         Vec::new(),
         &harness.header,
         &bundle_with_metadata,
+        None,  // No flashblocks cache in tests
     )?;
 
     assert!(output.results.is_empty());
@@ -209,6 +210,7 @@ fn meter_bundle_single_transaction() -> eyre::Result<()> {
         vec![envelope],
         &harness.header,
         &bundle_with_metadata,
+        None,  // No flashblocks cache in tests
     )?;
 
     assert_eq!(output.results.len(), 1);
@@ -305,6 +307,7 @@ fn meter_bundle_multiple_transactions() -> eyre::Result<()> {
         vec![envelope_1, envelope_2],
         &harness.header,
         &bundle_with_metadata,
+        None,  // No flashblocks cache in tests
     )?;
 
     assert_eq!(output.results.len(), 2);
@@ -393,6 +396,7 @@ fn meter_bundle_state_root_time_invariant() -> eyre::Result<()> {
         vec![envelope],
         &harness.header,
         &bundle_with_metadata,
+        None,  // No flashblocks cache in tests
     )?;
 
     // Verify invariant: total execution time must include state root time

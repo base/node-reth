@@ -1,14 +1,16 @@
-use alloy_consensus::Header;
+use alloy_consensus::{Header, Sealed};
 use alloy_eips::eip2718::Decodable2718;
-use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::U256;
+use base_reth_flashblocks_rpc::rpc::{FlashblocksAPI, PendingBlocksAPI};
 use jsonrpsee::{
     core::{async_trait, RpcResult},
     proc_macros::rpc,
 };
 use reth::providers::BlockReaderIdExt;
 use reth_optimism_chainspec::OpChainSpec;
+use reth_primitives_traits::SealedHeader;
 use reth_provider::{ChainSpecProvider, StateProviderFactory};
+use std::sync::Arc;
 use tips_core::types::{Bundle, BundleWithMetadata, MeterBundleResponse};
 use tracing::{error, info};
 
@@ -23,25 +25,30 @@ pub trait MeteringApi {
 }
 
 /// Implementation of the metering RPC API
-pub struct MeteringApiImpl<Provider> {
+pub struct MeteringApiImpl<Provider, FB> {
     provider: Provider,
+    flashblocks_state: Arc<FB>,
 }
 
-impl<Provider> MeteringApiImpl<Provider>
+impl<Provider, FB> MeteringApiImpl<Provider, FB>
 where
     Provider: StateProviderFactory
         + ChainSpecProvider<ChainSpec = OpChainSpec>
         + BlockReaderIdExt<Header = Header>
         + Clone,
+    FB: FlashblocksAPI,
 {
     /// Creates a new instance of MeteringApi
-    pub fn new(provider: Provider) -> Self {
-        Self { provider }
+    pub fn new(provider: Provider, flashblocks_state: Arc<FB>) -> Self {
+        Self {
+            provider,
+            flashblocks_state,
+        }
     }
 }
 
 #[async_trait]
-impl<Provider> MeteringApiServer for MeteringApiImpl<Provider>
+impl<Provider, FB> MeteringApiServer for MeteringApiImpl<Provider, FB>
 where
     Provider: StateProviderFactory
         + ChainSpecProvider<ChainSpec = OpChainSpec>
@@ -50,6 +57,7 @@ where
         + Send
         + Sync
         + 'static,
+    FB: FlashblocksAPI + Send + Sync + 'static,
 {
     async fn meter_bundle(&self, bundle: Bundle) -> RpcResult<MeterBundleResponse> {
         info!(
@@ -58,24 +66,54 @@ where
             "Starting bundle metering"
         );
 
-        // Get the latest header
-        let header = self
-            .provider
-            .sealed_header_by_number_or_tag(BlockNumberOrTag::Latest)
-            .map_err(|e| {
-                jsonrpsee::types::ErrorObjectOwned::owned(
-                    jsonrpsee::types::ErrorCode::InternalError.code(),
-                    format!("Failed to get latest header: {}", e),
-                    None::<()>,
-                )
-            })?
-            .ok_or_else(|| {
-                jsonrpsee::types::ErrorObjectOwned::owned(
-                    jsonrpsee::types::ErrorCode::InternalError.code(),
-                    "Latest block not found".to_string(),
-                    None::<()>,
-                )
-            })?;
+        // Get pending flashblocks state
+        let pending_blocks = self.flashblocks_state.get_pending_blocks();
+
+        // Get header and flashblock index from pending blocks
+        // If no pending blocks exist, fall back to latest canonical block
+        let (header, flashblock_index, canonical_block_number) = if let Some(pb) = pending_blocks.as_ref() {
+            let latest_header: Sealed<Header> = pb.latest_header();
+            let flashblock_index = pb.latest_flashblock_index();
+            let canonical_block_number = pb.canonical_block_number();
+
+            info!(
+                latest_block = latest_header.number,
+                canonical_block = %canonical_block_number,
+                flashblock_index = flashblock_index,
+                "Using latest flashblock state for metering"
+            );
+
+            // Convert Sealed<Header> to SealedHeader
+            let sealed_header = SealedHeader::new(latest_header.inner().clone(), latest_header.hash());
+            (sealed_header, flashblock_index, canonical_block_number)
+        } else {
+            // No pending blocks, use latest canonical block
+            let canonical_block_number = pending_blocks.get_canonical_block_number();
+            let header = self
+                .provider
+                .sealed_header_by_number_or_tag(canonical_block_number)
+                .map_err(|e| {
+                    jsonrpsee::types::ErrorObjectOwned::owned(
+                        jsonrpsee::types::ErrorCode::InternalError.code(),
+                        format!("Failed to get canonical block header: {}", e),
+                        None::<()>,
+                    )
+                })?
+                .ok_or_else(|| {
+                    jsonrpsee::types::ErrorObjectOwned::owned(
+                        jsonrpsee::types::ErrorCode::InternalError.code(),
+                        "Canonical block not found".to_string(),
+                        None::<()>,
+                    )
+                })?;
+
+            info!(
+                canonical_block = header.number,
+                "No flashblocks available, using canonical block state for metering"
+            );
+
+            (header, 0, canonical_block_number)
+        };
 
         // Manually decode transactions to OpTxEnvelope (op-alloy 0.20) instead of using
         // BundleWithMetadata.transactions() which returns op-alloy 0.21 types incompatible with reth.
@@ -101,10 +139,10 @@ where
             )
         })?;
 
-        // Get state provider for the block
+        // Get state provider for the canonical block
         let state_provider = self
             .provider
-            .state_by_block_hash(header.hash())
+            .state_by_block_number_or_tag(canonical_block_number)
             .map_err(|e| {
                 error!(error = %e, "Failed to get state provider");
                 jsonrpsee::types::ErrorObjectOwned::owned(
@@ -114,6 +152,9 @@ where
                 )
             })?;
 
+        // If we have pending flashblocks, get the db_cache to apply state changes
+        let db_cache = pending_blocks.as_ref().map(|pb| pb.get_db_cache());
+
         // Meter bundle using utility function
         let result = meter_bundle(
             state_provider,
@@ -121,6 +162,7 @@ where
             decoded_txs,
             &header,
             &bundle_with_metadata,
+            db_cache,
         )
         .map_err(|e| {
             error!(error = %e, "Bundle metering failed");
@@ -144,9 +186,13 @@ where
             total_gas_used = result.total_gas_used,
             total_execution_time_us = result.total_execution_time_us,
             state_root_time_us = result.state_root_time_us,
+            state_block_number = header.number,
+            flashblock_index = flashblock_index,
             "Bundle metering completed successfully"
         );
 
+        // TODO: Add flashblock_index to MeterBundleResponse in tips-core
+        // The response should indicate both the canonical block number and the flashblock index
         Ok(MeterBundleResponse {
             bundle_gas_price,
             bundle_hash: result.bundle_hash,

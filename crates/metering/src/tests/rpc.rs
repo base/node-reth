@@ -6,6 +6,7 @@ mod tests {
     use alloy_primitives::bytes;
     use alloy_primitives::{address, b256, Bytes, U256};
     use alloy_rpc_client::RpcClient;
+    use base_reth_flashblocks_rpc::state::FlashblocksState;
     use op_alloy_consensus::OpTxEnvelope;
     use reth::args::{DiscoveryArgs, NetworkArgs, RpcServerArgs};
     use reth::builder::{Node, NodeBuilder, NodeConfig, NodeHandle};
@@ -91,7 +92,9 @@ mod tests {
             .with_components(node.components_builder())
             .with_add_ons(node.add_ons())
             .extend_rpc_modules(move |ctx| {
-                let metering_api = MeteringApiImpl::new(ctx.provider().clone());
+                // Create a FlashblocksState without starting it (no pending blocks for testing)
+                let flashblocks_state = Arc::new(FlashblocksState::new(ctx.provider().clone()));
+                let metering_api = MeteringApiImpl::new(ctx.provider().clone(), flashblocks_state);
                 ctx.modules.merge_configured(metering_api.into_rpc())?;
                 Ok(())
             })
