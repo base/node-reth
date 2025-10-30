@@ -45,7 +45,7 @@ base-reth-transaction-tracing = { path = "crates/transaction-tracing" }
 
 # base/tips
 # Note: default-features = false avoids version conflicts with reth's alloy/op-alloy dependencies
-tips-core = { git = "https://github.com/base/tips", rev = "27674ae051a86033ece61ae24434aeacdb28ce73", default-features = false }
+tips-core = { git = "https://github.com/base/tips", rev = "86b275c0fd63226c3fb85ac5512033f99b67d0f5", default-features = false }
 
 # reth
 reth = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.2" }
@@ -69,10 +69,12 @@ reth-exex = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.2" }
 reth-db = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.2" }
 reth-testing-utils = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.2" }
 reth-db-common = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.2" }
+reth-trie-common = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.2" }
 
 # revm
 revm = { version = "29.0.0", default-features = false }
 revm-bytecode = { version = "6.2.2", default-features = false }
+revm-database = { version = "7.0.5", default-features = false }
 
 # alloy
 alloy-primitives = { version = "1.3.1", default-features = false, features = [
