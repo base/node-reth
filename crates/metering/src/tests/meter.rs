@@ -162,6 +162,7 @@ fn meter_bundle_empty_transactions() -> eyre::Result<()> {
         &harness.header,
         &bundle_with_metadata,
         None,
+        None,
     )?;
 
     assert!(output.results.is_empty());
@@ -210,6 +211,7 @@ fn meter_bundle_single_transaction() -> eyre::Result<()> {
         vec![envelope],
         &harness.header,
         &bundle_with_metadata,
+        None,
         None,
     )?;
 
@@ -308,6 +310,7 @@ fn meter_bundle_multiple_transactions() -> eyre::Result<()> {
         &harness.header,
         &bundle_with_metadata,
         None,
+        None,
     )?;
 
     assert_eq!(output.results.len(), 2);
@@ -396,6 +399,7 @@ fn meter_bundle_state_root_time_invariant() -> eyre::Result<()> {
         vec![envelope],
         &harness.header,
         &bundle_with_metadata,
+        None,
         None,
     )?;
 
