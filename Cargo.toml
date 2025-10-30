@@ -75,6 +75,7 @@ reth-db = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.2" }
 reth-testing-utils = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.2" }
 reth-db-common = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.2" }
 reth-ipc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.2" }
+reth-trie-common = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.2" }
 
 # revm
 revm = { version = "29.0.0", default-features = false }

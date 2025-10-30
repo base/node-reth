@@ -2,12 +2,13 @@ use alloy_consensus::{transaction::SignerRecoverable, BlockHeader, Transaction a
 use alloy_primitives::{B256, U256};
 use eyre::{eyre, Result as EyreResult};
 use reth::revm::db::{BundleState, Cache, CacheDB, State};
-use revm_database::states::bundle_state::BundleRetention;
 use reth_evm::execute::BlockBuilder;
 use reth_evm::ConfigureEvm;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_primitives_traits::SealedHeader;
+use reth_trie_common::TrieInput;
+use revm_database::states::bundle_state::BundleRetention;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -54,12 +55,24 @@ pub fn meter_bundle<SP>(
     header: &SealedHeader,
     bundle_with_metadata: &tips_core::types::BundleWithMetadata,
     flashblocks_state: Option<FlashblocksState>,
+    cached_flashblock_trie: Option<crate::FlashblockTrieData>,
 ) -> EyreResult<MeterBundleOutput>
 where
     SP: reth_provider::StateProvider,
 {
     // Get bundle hash from BundleWithMetadata
     let bundle_hash = bundle_with_metadata.bundle_hash();
+
+    // If we have flashblocks but no cached trie, compute the flashblock trie first
+    // (before starting any timers, since we only want to time the bundle's execution and state root)
+    let flashblock_trie = if cached_flashblock_trie.is_none() && flashblocks_state.is_some() {
+        let fb_state = flashblocks_state.as_ref().unwrap();
+        let fb_hashed_state = state_provider.hashed_post_state(&fb_state.bundle_state);
+        let (_fb_state_root, fb_trie_updates) = state_provider.state_root_with_updates(fb_hashed_state.clone())?;
+        Some((fb_trie_updates, fb_hashed_state))
+    } else {
+        None
+    };
 
     // Create state database
     let state_db = reth::revm::database::StateProviderDatabase::new(state_provider);
@@ -152,14 +165,28 @@ where
     }
 
     // Calculate state root and measure its calculation time
-    // The bundle already includes flashblocks state if it was provided via with_bundle_prestate
     db.merge_transitions(BundleRetention::Reverts);
     let bundle = db.take_bundle();
     let state_provider = db.database.db.as_ref();
-    let state_root_start = Instant::now();
 
+    let state_root_start = Instant::now();
     let hashed_post_state = state_provider.hashed_post_state(&bundle);
-    let _ = state_provider.state_root_with_updates(hashed_post_state);
+
+    if let Some(cached) = cached_flashblock_trie {
+        // We have cached flashblock trie nodes, use them
+        let mut trie_input = TrieInput::from_state(hashed_post_state);
+        trie_input.prepend_cached(cached.trie_updates, cached.hashed_state);
+        let _ = state_provider.state_root_from_nodes_with_updates(trie_input)?;
+    } else if let Some((fb_trie_updates, fb_hashed_state)) = flashblock_trie {
+        // We computed the flashblock trie above, now use it
+        let mut trie_input = TrieInput::from_state(hashed_post_state);
+        trie_input.prepend_cached(fb_trie_updates, fb_hashed_state);
+        let _ = state_provider.state_root_from_nodes_with_updates(trie_input)?;
+    } else {
+        // No flashblocks, just calculate bundle state root
+        let _ = state_provider.state_root_with_updates(hashed_post_state)?;
+    }
+
     let state_root_time = state_root_start.elapsed().as_micros();
 
     let total_execution_time = execution_start.elapsed().as_micros();
