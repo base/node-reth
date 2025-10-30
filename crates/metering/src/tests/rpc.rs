@@ -174,7 +174,10 @@ mod tests {
         assert!(response.total_execution_time_us > 0);
 
         // Verify state root time is present and non-zero
-        assert!(response.state_root_time_us > 0, "state_root_time_us should be greater than zero");
+        assert!(
+            response.state_root_time_us > 0,
+            "state_root_time_us should be greater than zero"
+        );
 
         // Verify invariant: total execution time includes state root time
         assert!(
