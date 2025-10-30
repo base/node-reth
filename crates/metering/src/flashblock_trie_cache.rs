@@ -92,10 +92,12 @@ impl FlashblockTrieCache {
         // Need to compute the flashblock trie (this will replace any existing cache entry)
 
         // Compute hashed post state from the bundle
-        let hashed_state = canonical_state_provider.hashed_post_state(&flashblocks_state.bundle_state);
+        let hashed_state =
+            canonical_state_provider.hashed_post_state(&flashblocks_state.bundle_state);
 
         // Calculate state root with updates to get the trie nodes
-        let (_state_root, trie_updates) = canonical_state_provider.state_root_with_updates(hashed_state.clone())?;
+        let (_state_root, trie_updates) =
+            canonical_state_provider.state_root_with_updates(hashed_state.clone())?;
 
         // Create the trie data
         let trie_data = FlashblockTrieData {
