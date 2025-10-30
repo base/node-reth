@@ -158,6 +158,9 @@ where
             bundle_state: pb.get_bundle_state(),
         });
 
+        // Get the flashblock index if we have pending flashblocks
+        let state_flashblock_index = pending_blocks.as_ref().map(|pb| pb.latest_flashblock_index());
+
         // Meter bundle using utility function
         let result = meter_bundle(
             state_provider,
@@ -194,8 +197,6 @@ where
             "Bundle metering completed successfully"
         );
 
-        // TODO: Add flashblock_index to MeterBundleResponse in tips-core
-        // The response should indicate both the canonical block number and the flashblock index
         Ok(MeterBundleResponse {
             bundle_gas_price,
             bundle_hash: result.bundle_hash,
@@ -204,6 +205,7 @@ where
             gas_fees: result.total_gas_fees.to_string(),
             results: result.results,
             state_block_number: header.number,
+            state_flashblock_index,
             total_gas_used: result.total_gas_used,
             total_execution_time_us: result.total_execution_time_us,
             state_root_time_us: result.state_root_time_us,
