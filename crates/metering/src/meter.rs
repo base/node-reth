@@ -1,7 +1,8 @@
 use alloy_consensus::{transaction::SignerRecoverable, BlockHeader, Transaction as _};
 use alloy_primitives::{B256, U256};
 use eyre::{eyre, Result as EyreResult};
-use reth::revm::db::{Cache, CacheDB, State};
+use reth::revm::db::{BundleState, Cache, CacheDB, State};
+use revm_database::states::bundle_state::BundleRetention;
 use reth_evm::execute::BlockBuilder;
 use reth_evm::ConfigureEvm;
 use reth_optimism_chainspec::OpChainSpec;
@@ -11,6 +12,15 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::TransactionResult;
+
+/// State from pending flashblocks that is used as a base for metering
+#[derive(Debug, Clone)]
+pub struct FlashblocksState {
+    /// The cache of account and storage data
+    pub cache: Cache,
+    /// The accumulated bundle of state changes
+    pub bundle_state: BundleState,
+}
 
 const BLOCK_TIME: u64 = 2; // 2 seconds per block
 
@@ -43,7 +53,7 @@ pub fn meter_bundle<SP>(
     decoded_txs: Vec<op_alloy_consensus::OpTxEnvelope>,
     header: &SealedHeader,
     bundle_with_metadata: &tips_core::types::BundleWithMetadata,
-    db_cache: Option<Cache>,
+    flashblocks_state: Option<FlashblocksState>,
 ) -> EyreResult<MeterBundleOutput>
 where
     SP: reth_provider::StateProvider,
@@ -51,28 +61,32 @@ where
     // Get bundle hash from BundleWithMetadata
     let bundle_hash = bundle_with_metadata.bundle_hash();
 
-    // Create state database with optional flashblocks cache
+    // Create state database
     let state_db = reth::revm::database::StateProviderDatabase::new(state_provider);
-    let base_state = State::builder()
-        .with_database(state_db)
-        .with_bundle_update()
-        .build();
 
-    // If we have flashblocks cache, wrap with CacheDB to apply pending changes
-    let cache_db = if let Some(cache) = db_cache {
+    // If we have flashblocks state, apply both cache and bundle prestate
+    let cache_db = if let Some(ref flashblocks) = flashblocks_state {
         CacheDB {
-            cache,
-            db: base_state,
+            cache: flashblocks.cache.clone(),
+            db: state_db,
         }
     } else {
-        CacheDB::new(base_state)
+        CacheDB::new(state_db)
     };
 
-    // Wrap the CacheDB in a State for the EVM builder
-    let mut db = State::builder()
-        .with_database(cache_db)
-        .with_bundle_update()
-        .build();
+    // Wrap the CacheDB in a State to track bundle changes for state root calculation
+    let mut db = if let Some(flashblocks) = flashblocks_state.as_ref() {
+        State::builder()
+            .with_database(cache_db)
+            .with_bundle_update()
+            .with_bundle_prestate(flashblocks.bundle_state.clone())
+            .build()
+    } else {
+        State::builder()
+            .with_database(cache_db)
+            .with_bundle_update()
+            .build()
+    };
 
     // Set up next block attributes
     // Use bundle.min_timestamp if provided, otherwise use header timestamp + BLOCK_TIME
@@ -138,11 +152,14 @@ where
     }
 
     // Calculate state root and measure its calculation time
+    // The bundle already includes flashblocks state if it was provided via with_bundle_prestate
+    db.merge_transitions(BundleRetention::Reverts);
     let bundle = db.take_bundle();
-    let state_provider = db.database.as_ref();
+    let state_provider = db.database.db.as_ref();
     let state_root_start = Instant::now();
-    let hashed_state = state_provider.hashed_post_state(&bundle);
-    let _ = state_provider.state_root_with_updates(hashed_state);
+
+    let hashed_post_state = state_provider.hashed_post_state(&bundle);
+    let _ = state_provider.state_root_with_updates(hashed_post_state);
     let state_root_time = state_root_start.elapsed().as_micros();
 
     let total_execution_time = execution_start.elapsed().as_micros();

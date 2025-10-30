@@ -40,6 +40,7 @@ base-reth-flashblocks-rpc = { path = "../flashblocks-rpc" }
 
 # revm
 revm.workspace = true
+revm-database.workspace = true
 
 # rpc
 jsonrpsee.workspace = true

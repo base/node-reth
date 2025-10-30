@@ -152,8 +152,11 @@ where
                 )
             })?;
 
-        // If we have pending flashblocks, get the db_cache to apply state changes
-        let db_cache = pending_blocks.as_ref().map(|pb| pb.get_db_cache());
+        // If we have pending flashblocks, get the state to apply pending changes
+        let flashblocks_state = pending_blocks.as_ref().map(|pb| crate::FlashblocksState {
+            cache: pb.get_db_cache(),
+            bundle_state: pb.get_bundle_state(),
+        });
 
         // Meter bundle using utility function
         let result = meter_bundle(
@@ -162,7 +165,7 @@ where
             decoded_txs,
             &header,
             &bundle_with_metadata,
-            db_cache,
+            flashblocks_state,
         )
         .map_err(|e| {
             error!(error = %e, "Bundle metering failed");
