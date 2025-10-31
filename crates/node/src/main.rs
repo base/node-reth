@@ -1,3 +1,4 @@
+use base_reth_flashblocks_rpc::pubsub::{BasePubSub, BasePubSubApiServer};
 use base_reth_flashblocks_rpc::rpc::EthApiExt;
 use futures_util::TryStreamExt;
 use once_cell::sync::OnceCell;
@@ -164,10 +165,14 @@ fn main() {
                         let api_ext = EthApiExt::new(
                             ctx.registry.eth_api().clone(),
                             ctx.registry.eth_handlers().filter.clone(),
-                            fb,
+                            fb.clone(),
                         );
 
                         ctx.modules.replace_configured(api_ext.into_rpc())?;
+
+                        // register the base_subscribe subscription endpoint
+                        let base_pubsub = BasePubSub::new(fb);
+                        ctx.modules.merge_configured(base_pubsub.into_rpc())?;
                     } else {
                         info!(message = "flashblocks integration is disabled");
                     }

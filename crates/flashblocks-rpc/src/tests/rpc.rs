@@ -1,5 +1,6 @@
 #[cfg(test)]
 mod tests {
+    use crate::pubsub::{BasePubSub, BasePubSubApiServer};
     use crate::rpc::{EthApiExt, EthApiOverrideServer};
     use crate::state::FlashblocksState;
     use crate::subscription::{Flashblock, FlashblocksReceiver, Metadata};
@@ -38,9 +39,15 @@ mod tests {
     use std::sync::Arc;
     use tokio::sync::{mpsc, oneshot};
 
+    // ws
+    use futures_util::{SinkExt, StreamExt};
+    use serde_json::json;
+    use tokio_tungstenite::{connect_async, tungstenite::Message};
+
     pub struct NodeContext {
         sender: mpsc::Sender<(Flashblock, oneshot::Sender<()>)>,
         http_api_addr: SocketAddr,
+        ws_api_addr: SocketAddr,
         _node_exit_future: NodeExitFuture,
         _node: Box<dyn Any + Sync + Send>,
         _task_manager: TaskManager,
@@ -85,6 +92,10 @@ mod tests {
 
             Ok(receipt)
         }
+
+        pub fn ws_url(&self) -> String {
+            format!("ws://{}", self.ws_api_addr)
+        }
     }
 
     async fn setup_node() -> eyre::Result<NodeContext> {
@@ -112,7 +123,12 @@ mod tests {
         // Use with_unused_ports() to let Reth allocate random ports and avoid port collisions
         let node_config = NodeConfig::new(chain_spec.clone())
             .with_network(network_config.clone())
-            .with_rpc(RpcServerArgs::default().with_unused_ports().with_http())
+            .with_rpc(
+                RpcServerArgs::default()
+                    .with_unused_ports()
+                    .with_http()
+                    .with_ws(),
+            )
             .with_unused_ports();
 
         let node = OpNode::new(RollupArgs::default());
@@ -142,6 +158,10 @@ mod tests {
 
                 ctx.modules.replace_configured(api_ext.into_rpc())?;
 
+                // Register base_subscribe subscription endpoint
+                let base_pubsub = BasePubSub::new(flashblocks_state.clone());
+                ctx.modules.merge_configured(base_pubsub.into_rpc())?;
+
                 tokio::spawn(async move {
                     while let Some((payload, tx)) = receiver.recv().await {
                         flashblocks_state.on_flashblock_received(payload);
@@ -159,9 +179,15 @@ mod tests {
             .http_local_addr()
             .ok_or_else(|| eyre::eyre!("Failed to get http api address"))?;
 
+        let ws_api_addr = node
+            .rpc_server_handle()
+            .ws_local_addr()
+            .ok_or_else(|| eyre::eyre!("Failed to get websocket api address"))?;
+
         Ok(NodeContext {
             sender,
             http_api_addr,
+            ws_api_addr,
             _node_exit_future: node_exit_future,
             _node: Box::new(node),
             _task_manager: tasks,
@@ -913,6 +939,182 @@ mod tests {
         assert!(logs
             .iter()
             .all(|log| log.transaction_hash == Some(INCREMENT_HASH)));
+
+        Ok(())
+    }
+
+    // base_ methods
+    #[tokio::test]
+    async fn test_base_subscribe_new_flashblocks() -> eyre::Result<()> {
+        reth_tracing::init_test_tracing();
+        let node = setup_node().await?;
+        let ws_url = node.ws_url();
+        let (mut ws_stream, _) = connect_async(&ws_url).await?;
+
+        ws_stream
+            .send(Message::Text(
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "base_subscribe",
+                    "params": ["newFlashblocks"]
+                })
+                .to_string()
+                .into(),
+            ))
+            .await?;
+
+        let response = ws_stream.next().await.unwrap()?;
+        let sub: serde_json::Value = serde_json::from_str(response.to_text()?)?;
+        assert_eq!(sub["jsonrpc"], "2.0");
+        assert_eq!(sub["id"], 1);
+        let subscription_id = sub["result"].as_str().expect("subscription id expected");
+
+        node.send_payload(create_first_payload()).await?;
+
+        let notification = ws_stream.next().await.unwrap()?;
+        let notif: serde_json::Value = serde_json::from_str(notification.to_text()?)?;
+        assert_eq!(notif["method"], "base_subscription");
+        assert_eq!(notif["params"]["subscription"], subscription_id);
+
+        let block = &notif["params"]["result"];
+        assert_eq!(block["number"], "0x1");
+        assert!(block["hash"].is_string());
+        assert!(block["parentHash"].is_string());
+        assert!(block["transactions"].is_array());
+        assert_eq!(block["transactions"].as_array().unwrap().len(), 1);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_base_subscribe_multiple_flashblocks() -> eyre::Result<()> {
+        reth_tracing::init_test_tracing();
+        let node = setup_node().await?;
+        let ws_url = node.ws_url();
+        let (mut ws_stream, _) = connect_async(&ws_url).await?;
+
+        ws_stream
+            .send(Message::Text(
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "base_subscribe",
+                    "params": ["newFlashblocks"]
+                })
+                .to_string()
+                .into(),
+            ))
+            .await?;
+
+        let response = ws_stream.next().await.unwrap()?;
+        let sub: serde_json::Value = serde_json::from_str(response.to_text()?)?;
+        let subscription_id = sub["result"].as_str().expect("subscription id expected");
+
+        node.send_payload(create_first_payload()).await?;
+
+        let notif1 = ws_stream.next().await.unwrap()?;
+        let notif1: serde_json::Value = serde_json::from_str(notif1.to_text()?)?;
+        assert_eq!(notif1["params"]["subscription"], subscription_id);
+
+        let block1 = &notif1["params"]["result"];
+        assert_eq!(block1["number"], "0x1");
+        assert_eq!(block1["transactions"].as_array().unwrap().len(), 1);
+
+        node.send_payload(create_second_payload()).await?;
+
+        let notif2 = ws_stream.next().await.unwrap()?;
+        let notif2: serde_json::Value = serde_json::from_str(notif2.to_text()?)?;
+        assert_eq!(notif2["params"]["subscription"], subscription_id);
+
+        let block2 = &notif2["params"]["result"];
+        assert_eq!(block1["number"], block2["number"]); // Same block, incremental updates
+        assert_eq!(block2["transactions"].as_array().unwrap().len(), 5);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_base_unsubscribe() -> eyre::Result<()> {
+        reth_tracing::init_test_tracing();
+        let node = setup_node().await?;
+        let ws_url = node.ws_url();
+        let (mut ws_stream, _) = connect_async(&ws_url).await?;
+
+        ws_stream
+            .send(Message::Text(
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "base_subscribe",
+                    "params": ["newFlashblocks"]
+                })
+                .to_string()
+                .into(),
+            ))
+            .await?;
+
+        let response = ws_stream.next().await.unwrap()?;
+        let sub: serde_json::Value = serde_json::from_str(response.to_text()?)?;
+        let subscription_id = sub["result"].as_str().expect("subscription id expected");
+
+        ws_stream
+            .send(Message::Text(
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "base_unsubscribe",
+                    "params": [subscription_id]
+                })
+                .to_string()
+                .into(),
+            ))
+            .await?;
+
+        let unsub = ws_stream.next().await.unwrap()?;
+        let unsub: serde_json::Value = serde_json::from_str(unsub.to_text()?)?;
+        assert_eq!(unsub["jsonrpc"], "2.0");
+        assert_eq!(unsub["id"], 2);
+        assert_eq!(unsub["result"], true);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_base_subscribe_multiple_clients() -> eyre::Result<()> {
+        reth_tracing::init_test_tracing();
+        let node = setup_node().await?;
+        let ws_url = node.ws_url();
+        let (mut ws1, _) = connect_async(&ws_url).await?;
+        let (mut ws2, _) = connect_async(&ws_url).await?;
+
+        let req = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "base_subscribe",
+            "params": ["newFlashblocks"]
+        });
+        ws1.send(Message::Text(req.to_string().into())).await?;
+        ws2.send(Message::Text(req.to_string().into())).await?;
+
+        let _sub1 = ws1.next().await.unwrap()?;
+        let _sub2 = ws2.next().await.unwrap()?;
+
+        node.send_payload(create_first_payload()).await?;
+
+        let notif1 = ws1.next().await.unwrap()?;
+        let notif1: serde_json::Value = serde_json::from_str(notif1.to_text()?)?;
+        let notif2 = ws2.next().await.unwrap()?;
+        let notif2: serde_json::Value = serde_json::from_str(notif2.to_text()?)?;
+
+        assert_eq!(notif1["method"], "base_subscription");
+        assert_eq!(notif2["method"], "base_subscription");
+
+        let block1 = &notif1["params"]["result"];
+        let block2 = &notif2["params"]["result"];
+        assert_eq!(block1["number"], "0x1");
+        assert_eq!(block1["number"], block2["number"]);
+        assert_eq!(block1["hash"], block2["hash"]);
 
         Ok(())
     }
