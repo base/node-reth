@@ -1,5 +1,8 @@
 name: CI
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: [main]
@@ -68,3 +71,12 @@ jobs:
         with:
           components: clippy
       - run: cargo clippy -- -D warnings
+
+  detect-unused-dependencies:
+    name: Cargo Machete
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Machete
+        uses: bnjbvr/cargo-machete@main

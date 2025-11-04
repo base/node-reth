@@ -1526,9 +1526,7 @@ dependencies = [
  "reth-db-common",
  "reth-e2e-test-utils",
  "reth-evm 1.8.2",
- "reth-exex",
  "reth-optimism-chainspec 1.8.2",
- "reth-optimism-cli",
  "reth-optimism-evm 1.8.2",
  "reth-optimism-node",
  "reth-optimism-primitives 1.8.2",
@@ -1573,14 +1571,11 @@ dependencies = [
  "reth-optimism-evm 1.8.2",
  "reth-optimism-node",
  "reth-optimism-primitives 1.8.2",
- "reth-primitives",
  "reth-primitives-traits 1.8.2",
  "reth-provider",
  "reth-testing-utils",
  "reth-tracing",
  "reth-transaction-pool 1.8.2",
- "revm",
- "serde",
  "serde_json",
  "tips-core",
  "tokio",
@@ -1591,59 +1586,19 @@ dependencies = [
 name = "base-reth-node"
 version = "0.1.15"
 dependencies = [
- "alloy-consensus",
- "alloy-eips",
- "alloy-hardforks",
- "alloy-primitives",
- "alloy-provider",
- "alloy-rpc-types",
- "alloy-rpc-types-engine",
- "alloy-rpc-types-eth",
- "alloy-trie",
  "base-reth-flashblocks-rpc",
  "base-reth-metering",
  "base-reth-transaction-tracing",
- "chrono",
  "clap",
- "eyre",
- "futures",
  "futures-util",
- "itertools 0.14.0",
- "jsonrpsee 0.26.0",
- "metrics",
- "metrics-derive",
  "once_cell",
- "op-alloy-consensus 0.20.0",
- "op-alloy-network",
- "op-alloy-rpc-jsonrpsee",
- "op-alloy-rpc-types",
- "op-alloy-rpc-types-engine",
- "reqwest",
  "reth",
  "reth-cli-util",
  "reth-exex",
- "reth-optimism-chainspec 1.8.2",
  "reth-optimism-cli",
- "reth-optimism-evm 1.8.2",
  "reth-optimism-node",
- "reth-optimism-primitives 1.8.2",
- "reth-optimism-rpc",
- "reth-primitives",
- "reth-rpc-convert",
- "reth-rpc-eth-api",
- "revm",
- "revm-bytecode",
- "rollup-boost",
- "rustls",
- "serde",
- "serde_json",
- "time",
- "tokio",
- "tokio-stream",
- "tokio-tungstenite",
  "tracing",
  "url",
- "uuid",
 ]
 
 [[package]]
@@ -1656,15 +1611,10 @@ dependencies = [
  "futures",
  "lru 0.16.2",
  "metrics",
- "metrics-derive",
  "reth",
  "reth-exex",
- "reth-optimism-cli",
- "reth-optimism-node",
- "reth-primitives",
  "reth-tracing",
  "tokio",
- "tokio-stream",
 ]
 
 [[package]]
@@ -3243,15 +3193,6 @@ dependencies = [
  "serdect",
  "subtle",
  "zeroize",
-]
-
-[[package]]
-name = "encoding_rs"
-version = "0.8.35"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "75030f3c4f45dafd7586dd6780965a8c7e8e285a5ecb86713e63a79c5b2766f3"
-dependencies = [
- "cfg-if",
 ]
 
 [[package]]
@@ -7033,11 +6974,9 @@ checksum = "9d0946410b9f7b082a427e4ef5c8ff541a88b357bc6c637c40db3a68ac70a36f"
 dependencies = [
  "base64 0.22.1",
  "bytes",
- "encoding_rs",
  "futures-channel",
  "futures-core",
  "futures-util",
- "h2",
  "http",
  "http-body",
  "http-body-util",
@@ -7047,7 +6986,6 @@ dependencies = [
  "hyper-util",
  "js-sys",
  "log",
- "mime",
  "native-tls",
  "percent-encoding",
  "pin-project-lite",
@@ -11838,12 +11776,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sha1_smol"
-version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbfa15b3dddfee50a0fff136974b3e1bde555604ba463834a7eb7deb6417705d"
-
-[[package]]
 name = "sha2"
 version = "0.9.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -13176,7 +13108,6 @@ dependencies = [
  "getrandom 0.3.4",
  "js-sys",
  "serde",
- "sha1_smol",
  "wasm-bindgen",
 ]
 
