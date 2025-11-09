@@ -179,7 +179,7 @@ mod tests {
             "state_root_time_us should be greater than zero"
         );
 
-        // Verify invariant: total execution time includes state root time
+        // Verify invariant: total time includes state root time
         assert!(
             response.total_execution_time_us >= response.state_root_time_us,
             "total_execution_time_us should be >= state_root_time_us"
