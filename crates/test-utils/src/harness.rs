@@ -2,12 +2,13 @@
 
 use crate::accounts::TestAccounts;
 use crate::engine::{EngineApi, IpcEngine};
-use crate::node::{LocalNode, OpAddOns, OpBuilder};
+use crate::node::{LocalFlashblocksState, LocalNode, LocalNodeProvider, OpAddOns, OpBuilder};
 use alloy_eips::eip7685::Requests;
 use alloy_primitives::{Bytes, B256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_rpc_types_engine::PayloadAttributes;
+use base_reth_flashblocks_rpc::subscription::Flashblock;
 use eyre::{eyre, Result};
 use futures_util::Future;
 use op_alloy_network::Optimism;
@@ -15,6 +16,7 @@ use op_alloy_rpc_types_engine::OpPayloadAttributes;
 use reth::builder::NodeHandle;
 use reth_e2e_test_utils::Adapter;
 use reth_optimism_node::OpNode;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -56,6 +58,14 @@ impl TestHarness {
 
     pub fn accounts(&self) -> &TestAccounts {
         &self.accounts
+    }
+
+    pub fn blockchain_provider(&self) -> LocalNodeProvider {
+        self.node.blockchain_provider()
+    }
+
+    pub fn flashblocks_state(&self) -> Arc<LocalFlashblocksState> {
+        self.node.flashblocks_state()
     }
 
     pub fn rpc_url(&self) -> String {
@@ -126,6 +136,20 @@ impl TestHarness {
             .update_forkchoice(parent_hash, new_block_hash, None)
             .await?;
 
+        Ok(())
+    }
+
+    pub async fn send_flashblock(&self, flashblock: Flashblock) -> Result<()> {
+        self.node.send_flashblock(flashblock).await
+    }
+
+    pub async fn send_flashblocks<I>(&self, flashblocks: I) -> Result<()>
+    where
+        I: IntoIterator<Item = Flashblock>,
+    {
+        for flashblock in flashblocks {
+            self.send_flashblock(flashblock).await?;
+        }
         Ok(())
     }
 

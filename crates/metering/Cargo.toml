@@ -65,5 +65,7 @@ reth-tracing.workspace = true
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }
 serde_json.workspace = true
 tokio.workspace = true
-
-
+base-reth-test-utils = { path = "../test-utils" }
+alloy-rpc-types-engine.workspace = true
+rollup-boost.workspace = true
+alloy-provider.workspace = true
