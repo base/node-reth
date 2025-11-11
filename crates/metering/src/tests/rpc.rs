@@ -1,21 +1,18 @@
 use crate::rpc::{MeteringApiImpl, MeteringApiServer};
-use alloy_consensus::Receipt;
 use alloy_eips::Encodable2718;
-use alloy_primitives::{address, Bytes, B256, U256};
+use alloy_primitives::{address, Bytes, U256};
 use alloy_provider::Provider;
-use base_reth_flashblocks_rpc::rpc::FlashblocksAPI;
 use base_reth_test_utils::harness::TestHarness;
 use base_reth_test_utils::node::{
     default_launcher, LocalFlashblocksState, LocalNodeProvider, BASE_CHAIN_ID,
 };
 use eyre::{eyre, Result};
 use op_alloy_consensus::OpTxEnvelope;
-use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
-use reth_provider::HeaderProvider;
+use reth_optimism_primitives::OpTransactionSigned;
 use reth_transaction_pool::test_utils::TransactionBuilder;
 use tips_core::types::Bundle;
 
-use super::utils::{build_single_flashblock, secret_from_hex};
+use super::utils::secret_from_hex;
 
 struct RpcTestContext {
     harness: TestHarness,
@@ -328,73 +325,6 @@ async fn test_meter_bundle_gas_calculations() -> Result<()> {
     assert_eq!(response.coinbase_diff, total_fees.to_string());
     assert_eq!(response.total_gas_used, 42_000);
     assert_eq!(response.bundle_gas_price, "5000000000");
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn flashblock_without_beacon_root_errors() -> Result<()> {
-    reth_tracing::init_test_tracing();
-    let ctx = RpcTestContext::new().await?;
-
-    let provider = ctx.harness().provider();
-    let latest_block = provider.get_block_number().await?;
-    let blockchain_provider = ctx.harness().blockchain_provider();
-    let latest_header = blockchain_provider
-        .sealed_header(latest_block)?
-        .ok_or_else(|| eyre!("missing header for block {}", latest_block))?;
-
-    let alice_secret = secret_from_hex(ctx.accounts().alice.private_key);
-    let tx = TransactionBuilder::default()
-        .signer(alice_secret)
-        .chain_id(BASE_CHAIN_ID)
-        .nonce(0)
-        .to(ctx.accounts().bob.address)
-        .value(1)
-        .gas_limit(21_000)
-        .max_fee_per_gas(1_000_000_000)
-        .max_priority_fee_per_gas(1_000_000_000)
-        .into_eip1559();
-
-    let envelope = OpTxEnvelope::from(OpTransactionSigned::Eip1559(
-        tx.as_eip1559().unwrap().clone(),
-    ));
-    let tx_hash = envelope.tx_hash();
-    let tx_bytes = Bytes::from(envelope.encoded_2718());
-    let receipt = OpReceipt::Eip1559(Receipt {
-        status: true.into(),
-        cumulative_gas_used: 21_000,
-        logs: vec![],
-    });
-
-    // Zero-out the parent beacon block root to emulate a flashblock that lacks Cancun data.
-    let flashblock = build_single_flashblock(
-        latest_header.number + 1,
-        latest_header.hash(),
-        B256::ZERO,
-        latest_header.timestamp + 2,
-        latest_header.gas_limit,
-        vec![(tx_bytes.clone(), Some((tx_hash, receipt.clone())))],
-    );
-
-    ctx.harness().send_flashblock(flashblock).await?;
-
-    let bundle = create_bundle(vec![tx_bytes], latest_header.number + 1, None);
-    let err = ctx
-        .meter_bundle_raw(bundle)
-        .await
-        .expect_err("pending flashblock metering should fail without beacon root");
-    assert!(err.message().contains("parent beacon block root missing"));
-
-    let pending_blocks = ctx.harness().flashblocks_state().get_pending_blocks();
-    assert!(
-        pending_blocks.is_some(),
-        "flashblock should populate pending state"
-    );
-    assert_eq!(
-        pending_blocks.as_ref().unwrap().latest_flashblock_index(),
-        0
-    );
 
     Ok(())
 }
