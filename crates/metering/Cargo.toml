@@ -32,9 +32,12 @@ reth-trie-common.workspace = true
 alloy-primitives.workspace = true
 alloy-consensus.workspace = true
 alloy-eips.workspace = true
+alloy-sol-types.workspace = true
+alloy-rpc-types-eth.workspace = true
 
 # op-alloy
 op-alloy-consensus.workspace = true
+op-alloy-rpc-types.workspace = true
 
 # base
 base-reth-flashblocks-rpc = { path = "../flashblocks-rpc" }
@@ -69,3 +72,4 @@ base-reth-test-utils = { path = "../test-utils" }
 alloy-rpc-types-engine.workspace = true
 rollup-boost.workspace = true
 alloy-provider.workspace = true
+hex-literal = "0.4"
