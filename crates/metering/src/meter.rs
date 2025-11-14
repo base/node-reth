@@ -1,49 +1,112 @@
 use alloy_consensus::{transaction::SignerRecoverable, BlockHeader, Transaction as _};
 use alloy_primitives::{B256, U256};
 use eyre::{eyre, Result as EyreResult};
-use reth::revm::db::State;
+use reth::revm::db::{BundleState, Cache, CacheDB, State};
 use reth_evm::execute::BlockBuilder;
 use reth_evm::ConfigureEvm;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_primitives_traits::SealedHeader;
+use reth_trie_common::TrieInput;
+use revm_database::states::bundle_state::BundleRetention;
 use std::sync::Arc;
 use std::time::Instant;
 
 use crate::TransactionResult;
 
+/// State from pending flashblocks that is used as a base for metering
+#[derive(Debug, Clone)]
+pub struct FlashblocksState {
+    /// The cache of account and storage data
+    pub cache: Cache,
+    /// The accumulated bundle of state changes
+    pub bundle_state: BundleState,
+}
+
 const BLOCK_TIME: u64 = 2; // 2 seconds per block
+
+/// Output from metering a bundle of transactions
+#[derive(Debug)]
+pub struct MeterBundleOutput {
+    /// Transaction results with individual metrics
+    pub results: Vec<TransactionResult>,
+    /// Total gas used by all transactions
+    pub total_gas_used: u64,
+    /// Total gas fees paid by all transactions
+    pub total_gas_fees: U256,
+    /// Bundle hash
+    pub bundle_hash: B256,
+    /// Total time in microseconds (includes transaction execution and state root calculation)
+    pub total_time_us: u128,
+    /// State root calculation time in microseconds
+    pub state_root_time_us: u128,
+}
 
 /// Simulates and meters a bundle of transactions
 ///
 /// Takes a state provider, chain spec, decoded transactions, block header, and bundle metadata,
 /// and executes transactions in sequence to measure gas usage and execution time.
 ///
-/// Returns a tuple of:
-/// - Vector of transaction results
-/// - Total gas used
-/// - Total gas fees paid
-/// - Bundle hash
-/// - Total execution time in microseconds
+/// Returns [`MeterBundleOutput`] containing transaction results and aggregated metrics.
 pub fn meter_bundle<SP>(
     state_provider: SP,
     chain_spec: Arc<OpChainSpec>,
     decoded_txs: Vec<op_alloy_consensus::OpTxEnvelope>,
     header: &SealedHeader,
     bundle_with_metadata: &tips_core::types::BundleWithMetadata,
-) -> EyreResult<(Vec<TransactionResult>, u64, U256, B256, u128)>
+    flashblocks_state: Option<FlashblocksState>,
+    cached_flashblock_trie: Option<crate::FlashblockTrieData>,
+) -> EyreResult<MeterBundleOutput>
 where
     SP: reth_provider::StateProvider,
 {
     // Get bundle hash from BundleWithMetadata
     let bundle_hash = bundle_with_metadata.bundle_hash();
 
+    // Consolidate flashblock trie data: use cached if available, otherwise compute it
+    // (before starting any timers, since we only want to time the bundle's execution and state root)
+    let flashblock_trie_data = cached_flashblock_trie
+        .map(Ok::<_, eyre::Report>)
+        .or_else(|| {
+            flashblocks_state.as_ref().map(|fb_state| {
+                // Compute the flashblock trie
+                let fb_hashed_state = state_provider.hashed_post_state(&fb_state.bundle_state);
+                let (_fb_state_root, fb_trie_updates) =
+                    state_provider.state_root_with_updates(fb_hashed_state.clone())?;
+                Ok(crate::FlashblockTrieData {
+                    trie_updates: fb_trie_updates,
+                    hashed_state: fb_hashed_state,
+                })
+            })
+        })
+        .transpose()?;
+
     // Create state database
     let state_db = reth::revm::database::StateProviderDatabase::new(state_provider);
-    let mut db = State::builder()
-        .with_database(state_db)
-        .with_bundle_update()
-        .build();
+
+    // If we have flashblocks state, apply both cache and bundle prestate
+    let cache_db = if let Some(ref flashblocks) = flashblocks_state {
+        CacheDB {
+            cache: flashblocks.cache.clone(),
+            db: state_db,
+        }
+    } else {
+        CacheDB::new(state_db)
+    };
+
+    // Wrap the CacheDB in a State to track bundle changes for state root calculation
+    let mut db = if let Some(flashblocks) = flashblocks_state.as_ref() {
+        State::builder()
+            .with_database(cache_db)
+            .with_bundle_update()
+            .with_bundle_prestate(flashblocks.bundle_state.clone())
+            .build()
+    } else {
+        State::builder()
+            .with_database(cache_db)
+            .with_bundle_update()
+            .build()
+    };
 
     // Set up next block attributes
     // Use bundle.min_timestamp if provided, otherwise use header timestamp + BLOCK_TIME
@@ -65,7 +128,7 @@ where
     let mut total_gas_used = 0u64;
     let mut total_gas_fees = U256::ZERO;
 
-    let execution_start = Instant::now();
+    let total_start = Instant::now();
     {
         let evm_config = OpEvmConfig::optimism(chain_spec);
         let mut builder = evm_config.builder_for_next_block(&mut db, header, attributes)?;
@@ -107,13 +170,35 @@ where
             });
         }
     }
-    let total_execution_time = execution_start.elapsed().as_micros();
 
-    Ok((
+    // Calculate state root and measure its calculation time
+    db.merge_transitions(BundleRetention::Reverts);
+    let bundle = db.take_bundle();
+    let state_provider = db.database.db.as_ref();
+
+    let state_root_start = Instant::now();
+    let hashed_post_state = state_provider.hashed_post_state(&bundle);
+
+    if let Some(fb_trie_data) = flashblock_trie_data {
+        // We have flashblock trie data (either cached or computed), use it
+        let mut trie_input = TrieInput::from_state(hashed_post_state);
+        trie_input.prepend_cached(fb_trie_data.trie_updates, fb_trie_data.hashed_state);
+        let _ = state_provider.state_root_from_nodes_with_updates(trie_input)?;
+    } else {
+        // No flashblocks, just calculate bundle state root
+        let _ = state_provider.state_root_with_updates(hashed_post_state)?;
+    }
+
+    let state_root_time = state_root_start.elapsed().as_micros();
+
+    let total_time = total_start.elapsed().as_micros();
+
+    Ok(MeterBundleOutput {
         results,
         total_gas_used,
         total_gas_fees,
         bundle_hash,
-        total_execution_time,
-    ))
+        total_time_us: total_time,
+        state_root_time_us: state_root_time,
+    })
 }
