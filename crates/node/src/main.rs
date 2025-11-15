@@ -32,8 +32,12 @@ struct Args {
     #[command(flatten)]
     pub rollup_args: RollupArgs,
 
-    #[arg(long = "websocket-url", value_name = "WEBSOCKET_URL")]
-    pub websocket_url: Option<String>,
+    #[arg(
+        long = "websocket-url", 
+        value_name = "WEBSOCKET_URL", 
+        value_parser = clap::value_parser!(Url)
+    )]
+    pub websocket_url: Option<Url>,
 
     #[arg(
         long = "max-pending-blocks-depth",
@@ -59,6 +63,7 @@ struct Args {
 }
 
 impl Args {
+    #[inline]
     fn flashblocks_enabled(&self) -> bool {
         self.websocket_url.is_some()
     }
