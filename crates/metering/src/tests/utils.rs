@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use alloy_primitives::{hex::FromHex, B256};
 use reth::api::{NodeTypes, NodeTypesWithDBAdapter};
 use reth_db::{
     init_db,
@@ -8,6 +9,10 @@ use reth_db::{
     ClientVersion, DatabaseEnv,
 };
 use reth_provider::{providers::StaticFileProvider, ProviderFactory};
+
+pub fn secret_from_hex(hex_key: &str) -> B256 {
+    B256::from_hex(hex_key).expect("32-byte private key")
+}
 
 pub fn create_provider_factory<N: NodeTypes>(
     chain_spec: Arc<N::ChainSpec>,
