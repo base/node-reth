@@ -1566,6 +1566,8 @@ dependencies = [
  "reth-rpc-eth-api",
  "reth-testing-utils",
  "reth-tracing",
+ "revm",
+ "revm-database",
  "rollup-boost",
  "serde",
  "serde_json",
@@ -1585,11 +1587,19 @@ dependencies = [
  "alloy-eips",
  "alloy-genesis",
  "alloy-primitives",
+ "alloy-provider",
  "alloy-rpc-client",
+ "alloy-rpc-types-engine",
+ "alloy-rpc-types-eth",
+ "alloy-sol-types",
+ "arc-swap",
+ "base-reth-flashblocks-rpc",
  "base-reth-test-utils",
  "eyre",
+ "hex-literal",
  "jsonrpsee 0.26.0",
  "op-alloy-consensus",
+ "op-alloy-rpc-types",
  "rand 0.9.2",
  "reth",
  "reth-db",
@@ -1607,7 +1617,10 @@ dependencies = [
  "reth-testing-utils",
  "reth-tracing",
  "reth-transaction-pool",
+ "reth-trie-common",
  "revm",
+ "revm-database",
+ "rollup-boost",
  "serde",
  "serde_json",
  "tips-core",
@@ -4104,6 +4117,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "hex-literal"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6fe2267d4ed49bc07b63801559be28c718ea06c4738b7a03c94df7386d2cde46"
+
+[[package]]
 name = "hickory-proto"
 version = "0.25.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4341,7 +4360,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "system-configuration",
  "tokio",
  "tower-service",
@@ -4361,7 +4380,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.62.2",
+ "windows-core 0.57.0",
 ]
 
 [[package]]
@@ -6761,7 +6780,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash 2.1.1",
  "rustls",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "thiserror 2.0.17",
  "tokio",
  "tracing",
@@ -6798,7 +6817,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "tracing",
  "windows-sys 0.60.2",
 ]
@@ -11726,7 +11745,7 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 [[package]]
 name = "tips-core"
 version = "0.1.0"
-source = "git+https://github.com/base/tips?rev=a21ee492dede17f31eea108c12c669a8190f31aa#a21ee492dede17f31eea108c12c669a8190f31aa"
+source = "git+https://github.com/base/tips?rev=c08eaa4fe10c26de8911609b41ddab4918698325#c08eaa4fe10c26de8911609b41ddab4918698325"
 dependencies = [
  "alloy-consensus",
  "alloy-primitives",
@@ -12742,7 +12761,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]

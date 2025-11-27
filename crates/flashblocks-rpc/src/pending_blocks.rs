@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
 
 use alloy_consensus::{Header, Sealed};
 use alloy_eips::BlockNumberOrTag;
@@ -13,11 +13,14 @@ use arc_swap::Guard;
 use eyre::eyre;
 use op_alloy_network::Optimism;
 use op_alloy_rpc_types::{OpTransactionReceipt, Transaction};
-use reth::revm::{db::Cache, state::EvmState};
+use reth::revm::{
+    db::{BundleState, Cache},
+    state::EvmState,
+};
 use reth_rpc_convert::RpcTransaction;
 use reth_rpc_eth_api::{RpcBlock, RpcReceipt};
 
-use crate::{rpc::PendingBlocksAPI, subscription::Flashblock};
+use crate::{metrics::Metrics, rpc::PendingBlocksAPI, subscription::Flashblock};
 
 pub struct PendingBlocksBuilder {
     flashblocks: Vec<Flashblock>,
@@ -33,6 +36,7 @@ pub struct PendingBlocksBuilder {
     state_overrides: Option<StateOverride>,
 
     db_cache: Cache,
+    bundle_state: BundleState,
 }
 
 impl PendingBlocksBuilder {
@@ -49,6 +53,7 @@ impl PendingBlocksBuilder {
             transaction_senders: HashMap::new(),
             state_overrides: None,
             db_cache: Cache::default(),
+            bundle_state: BundleState::default(),
         }
     }
 
@@ -116,6 +121,12 @@ impl PendingBlocksBuilder {
         self
     }
 
+    #[inline]
+    pub(crate) fn with_bundle_state(&mut self, bundle_state: BundleState) -> &Self {
+        self.bundle_state = bundle_state;
+        self
+    }
+
     pub(crate) fn build(self) -> eyre::Result<PendingBlocks> {
         if self.headers.is_empty() {
             return Err(eyre!("missing headers"));
@@ -137,6 +148,7 @@ impl PendingBlocksBuilder {
             transaction_senders: self.transaction_senders,
             state_overrides: self.state_overrides,
             db_cache: self.db_cache,
+            bundle_state: self.bundle_state,
         })
     }
 }
@@ -156,6 +168,7 @@ pub struct PendingBlocks {
     state_overrides: Option<StateOverride>,
 
     db_cache: Cache,
+    bundle_state: BundleState,
 }
 
 impl PendingBlocks {
@@ -193,6 +206,22 @@ impl PendingBlocks {
 
     pub fn get_db_cache(&self) -> Cache {
         self.db_cache.clone()
+    }
+
+    /// Returns a clone of the bundle state.
+    ///
+    /// NOTE: This clones the entire BundleState, which contains a HashMap of all touched
+    /// accounts and their storage slots. The cost scales with the number of accounts and
+    /// storage slots modified in the flashblock. Monitor `bundle_state_clone_duration` and
+    /// `bundle_state_clone_size` metrics to track if this becomes a bottleneck.
+    pub fn get_bundle_state(&self) -> BundleState {
+        let metrics = Metrics::default();
+        let size = self.bundle_state.state.len();
+        let start = Instant::now();
+        let cloned = self.bundle_state.clone();
+        metrics.bundle_state_clone_duration.record(start.elapsed());
+        metrics.bundle_state_clone_size.record(size as f64);
+        cloned
     }
 
     pub fn get_transactions_for_block(&self, block_number: BlockNumber) -> Vec<Transaction> {

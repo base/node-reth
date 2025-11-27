@@ -226,9 +226,21 @@ async fn test_flashblocks() -> eyre::Result<()> {
 }
 ```
 
-`FlashblocksHarness` derefs to the base `TestHarness`, so you can keep using methods like `provider()`, `build_block_from_transactions`, etc.
+Need to craft a flashblock (including intentionally malformed payloads)? Use `build_flashblock`:
 
-Test flashblocks delivery without WebSocket connections by constructing payloads and sending them through `FlashblocksHarness` (or the lower-level `FlashblocksLocalNode`).
+```rust
+let flashblock = harness.build_flashblock(
+    next_block_number,
+    parent_hash,
+    B256::ZERO, // force missing beacon root to test validation
+    timestamp,
+    gas_limit,
+    vec![(tx_bytes, Some((tx_hash, receipt)))],
+);
+harness.send_flashblock(flashblock).await?;
+```
+
+`FlashblocksHarness` derefs to the base `TestHarness`, so you can keep using methods like `provider()`, `build_block_from_transactions`, etc. Test flashblocks delivery without WebSocket connections by constructing payloads and sending them through `FlashblocksHarness` (or the lower-level `FlashblocksLocalNode`).
 
 ## Configuration Constants
 

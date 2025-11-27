@@ -135,12 +135,6 @@ fn main() {
                     }
                 })
                 .extend_rpc_modules(move |ctx| {
-                    if metering_enabled {
-                        info!(message = "Starting Metering RPC");
-                        let metering_api = MeteringApiImpl::new(ctx.provider().clone());
-                        ctx.modules.merge_configured(metering_api.into_rpc())?;
-                    }
-
                     if flashblocks_enabled {
                         info!(message = "Starting Flashblocks");
 
@@ -166,12 +160,23 @@ fn main() {
                         let api_ext = EthApiExt::new(
                             ctx.registry.eth_api().clone(),
                             ctx.registry.eth_handlers().filter.clone(),
-                            fb,
+                            fb.clone(),
                         );
 
                         ctx.modules.replace_configured(api_ext.into_rpc())?;
+
+                        if metering_enabled {
+                            info!(message = "Starting Metering RPC with Flashblocks state");
+                            let metering_api = MeteringApiImpl::new(ctx.provider().clone(), fb);
+                            ctx.modules.merge_configured(metering_api.into_rpc())?;
+                        }
                     } else {
                         info!(message = "flashblocks integration is disabled");
+                        if metering_enabled {
+                            return Err(eyre::eyre!(
+                                "Metering RPC requires flashblocks to be enabled (--websocket-url)"
+                            ));
+                        }
                     }
                     Ok(())
                 })
