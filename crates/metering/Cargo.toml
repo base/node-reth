@@ -40,6 +40,7 @@ jsonrpsee.workspace = true
 # misc
 tracing.workspace = true
 eyre.workspace = true
+serde.workspace = true
 
 [dev-dependencies]
 alloy-genesis.workspace = true

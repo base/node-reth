@@ -1624,6 +1624,7 @@ dependencies = [
  "reth-testing-utils",
  "reth-tracing",
  "reth-transaction-pool",
+ "serde",
  "serde_json",
  "tips-core",
  "tokio",
