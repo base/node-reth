@@ -344,7 +344,7 @@ where
             }
             None => {
                 if flashblock.index == 0 {
-                    self.build_pending_state(None, &vec![flashblock])
+                    self.build_pending_state(None, std::slice::from_ref(&flashblock))
                 } else {
                     info!(message = "waiting for first Flashblock");
                     Ok(None)
@@ -356,8 +356,12 @@ where
     fn build_pending_state(
         &self,
         prev_pending_blocks: Option<Arc<PendingBlocks>>,
-        flashblocks: &Vec<Flashblock>,
+        flashblocks: &[Flashblock],
     ) -> eyre::Result<Option<Arc<PendingBlocks>>> {
+        if flashblocks.is_empty() {
+            return Err(eyre!("cannot build a pending block from no flashblocks"));
+        }
+
         // BTreeMap guarantees ascending order of keys while iterating
         let mut flashblocks_per_block = BTreeMap::<BlockNumber, Vec<&Flashblock>>::new();
         for flashblock in flashblocks {
@@ -367,7 +371,8 @@ where
                 .push(flashblock);
         }
 
-        let earliest_block_number = flashblocks_per_block.keys().min().unwrap();
+        let earliest_block_number =
+            *flashblocks_per_block.keys().next().expect("flashblocks map cannot be empty");
         let canonical_block = earliest_block_number - 1;
         let mut last_block_header = self.client.header_by_number(canonical_block)?.ok_or(eyre!(
             "Failed to extract header for canonical block number {}. This can be ignored if the node has recently restarted, restored from a snapshot or is still syncing.",
@@ -430,9 +435,8 @@ where
                     acc
                 });
 
-            pending_blocks_builder.with_flashblocks(
-                flashblocks.iter().map(|&x| x.clone()).collect::<Vec<Flashblock>>(),
-            );
+            pending_blocks_builder
+                .with_flashblocks(flashblocks.iter().map(|flashblock| (*flashblock).clone()));
 
             let execution_payload: ExecutionPayloadV3 = ExecutionPayloadV3 {
                 blob_gas_used: 0,
