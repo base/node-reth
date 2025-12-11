@@ -459,9 +459,13 @@ mod tests {
         assert_eq!(response.block_number, 1);
         // Block 1 contains the L1 block info deposit transaction
         assert!(!response.transactions.is_empty());
+        assert!(response.signer_recovery_time_us > 0, "signer recovery time should be non-zero");
         assert!(response.execution_time_us > 0, "execution time should be non-zero");
         assert!(response.state_root_time_us > 0, "state root time should be non-zero");
-        assert_eq!(response.total_time_us, response.execution_time_us + response.state_root_time_us);
+        assert_eq!(
+            response.total_time_us,
+            response.signer_recovery_time_us + response.execution_time_us + response.state_root_time_us
+        );
 
         Ok(())
     }
