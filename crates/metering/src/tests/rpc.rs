@@ -2,11 +2,11 @@
 mod tests {
     use std::{any::Any, net::SocketAddr, sync::Arc};
 
-    use alloy_eips::Encodable2718;
+    use alloy_eips::{BlockNumberOrTag, Encodable2718};
     use alloy_genesis::Genesis;
-    use alloy_primitives::{Bytes, U256, address, b256, bytes};
+    use alloy_primitives::{B256, Bytes, U256, address, b256, bytes};
     use alloy_rpc_client::RpcClient;
-    use base_reth_test_utils::tracing::init_silenced_tracing;
+    use base_reth_test_utils::{harness::TestHarness, tracing::init_silenced_tracing};
     use op_alloy_consensus::OpTxEnvelope;
     use reth::{
         args::{DiscoveryArgs, NetworkArgs, RpcServerArgs},
@@ -24,6 +24,7 @@ mod tests {
     use tips_core::types::Bundle;
 
     use crate::rpc::{MeteringApiImpl, MeteringApiServer};
+    use crate::types::MeterBlockResponse;
 
     pub struct NodeContext {
         http_api_addr: SocketAddr,
@@ -104,6 +105,21 @@ mod tests {
             _node_exit_future: node_exit_future,
             _node: Box::new(node),
         })
+    }
+
+    /// Sets up a TestHarness with the metering RPC module enabled
+    async fn setup_harness_with_metering() -> eyre::Result<TestHarness> {
+        TestHarness::with_launcher(|builder| async move {
+            builder
+                .extend_rpc_modules(|ctx| {
+                    let metering_api = MeteringApiImpl::new(ctx.provider().clone());
+                    ctx.modules.merge_configured(metering_api.into_rpc())?;
+                    Ok(())
+                })
+                .launch()
+                .await
+        })
+        .await
     }
 
     #[tokio::test]
@@ -420,6 +436,123 @@ mod tests {
 
         // Bundle gas price should be weighted average: (3*21000 + 7*21000) / (21000 + 21000) = 5 gwei
         assert_eq!(response.bundle_gas_price, U256::from(5000000000u64));
+
+        Ok(())
+    }
+
+    // ======================= Block Metering RPC Tests =======================
+
+    #[tokio::test]
+    async fn test_meter_block_by_number() -> eyre::Result<()> {
+        let harness = setup_harness_with_metering().await?;
+
+        // Build a block (block 1) so we have a non-genesis block to meter
+        harness.advance_chain(1).await?;
+
+        let client = RpcClient::new_http(harness.rpc_url().parse()?);
+
+        // Meter block 1
+        let response: MeterBlockResponse = client
+            .request("base_meterBlockByNumber", (BlockNumberOrTag::Number(1),))
+            .await?;
+
+        assert_eq!(response.block_number, 1);
+        // Block 1 contains the L1 block info deposit transaction
+        assert!(!response.transactions.is_empty());
+        assert!(response.execution_time_us > 0, "execution time should be non-zero");
+        assert!(response.state_root_time_us > 0, "state root time should be non-zero");
+        assert_eq!(response.total_time_us, response.execution_time_us + response.state_root_time_us);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_meter_block_by_number_latest() -> eyre::Result<()> {
+        let harness = setup_harness_with_metering().await?;
+
+        // Build a few blocks
+        harness.advance_chain(3).await?;
+
+        let client = RpcClient::new_http(harness.rpc_url().parse()?);
+
+        // Meter the latest block
+        let response: MeterBlockResponse = client
+            .request("base_meterBlockByNumber", (BlockNumberOrTag::Latest,))
+            .await?;
+
+        // Latest block should be block 3
+        assert_eq!(response.block_number, 3);
+        assert!(response.execution_time_us > 0);
+        assert!(response.state_root_time_us > 0);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_meter_block_by_hash() -> eyre::Result<()> {
+        let harness = setup_harness_with_metering().await?;
+
+        // Build a block
+        harness.advance_chain(1).await?;
+
+        // Get block hash from the latest block (which is block 1)
+        let block = harness.latest_block();
+        let block_hash = block.hash();
+
+        let client = RpcClient::new_http(harness.rpc_url().parse()?);
+
+        // Meter by hash
+        let response: MeterBlockResponse =
+            client.request("base_meterBlockByHash", (block_hash,)).await?;
+
+        assert_eq!(response.block_hash, block_hash);
+        assert_eq!(response.block_number, 1);
+        assert!(response.execution_time_us > 0);
+        assert!(response.state_root_time_us > 0);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_meter_block_by_hash_not_found() -> eyre::Result<()> {
+        let harness = setup_harness_with_metering().await?;
+        let client = RpcClient::new_http(harness.rpc_url().parse()?);
+
+        // Try to meter a non-existent block hash
+        let fake_hash = B256::random();
+
+        let result: Result<MeterBlockResponse, _> =
+            client.request("base_meterBlockByHash", (fake_hash,)).await;
+
+        assert!(result.is_err(), "should return error for non-existent block");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_meter_block_by_number_not_found() -> eyre::Result<()> {
+        let harness = setup_harness_with_metering().await?;
+        let client = RpcClient::new_http(harness.rpc_url().parse()?);
+
+        // Try to meter a block number that doesn't exist
+        let result: Result<MeterBlockResponse, _> =
+            client.request("base_meterBlockByNumber", (BlockNumberOrTag::Number(999999),)).await;
+
+        assert!(result.is_err(), "should return error for non-existent block number");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_meter_block_genesis_fails() -> eyre::Result<()> {
+        let harness = setup_harness_with_metering().await?;
+        let client = RpcClient::new_http(harness.rpc_url().parse()?);
+
+        // Genesis block (block 0) has no parent, so metering should fail
+        let result: Result<MeterBlockResponse, _> =
+            client.request("base_meterBlockByNumber", (BlockNumberOrTag::Number(0),)).await;
+
+        assert!(result.is_err(), "genesis block should fail because it has no parent");
 
         Ok(())
     }
