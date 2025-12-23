@@ -1,3 +1,7 @@
+pub(crate) mod annotator;
+pub(crate) mod cache;
+pub(crate) mod estimator;
+pub(crate) mod kafka;
 pub(crate) mod meter;
 pub(crate) mod meter_rpc;
 pub(crate) mod pubsub;
