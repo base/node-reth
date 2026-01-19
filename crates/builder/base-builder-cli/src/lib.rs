@@ -9,7 +9,7 @@ mod flashblocks;
 pub use flashblocks::FlashblocksArgs;
 
 mod op;
-pub use op::OpRbuilderArgs;
+pub use op::{OpRbuilderArgs, ResourceMeteringMode};
 
 mod telemetry;
 pub use telemetry::TelemetryArgs;
