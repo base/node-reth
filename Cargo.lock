@@ -1948,6 +1948,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-engine-tree"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eip7928",
+ "alloy-eips",
+ "alloy-evm",
+ "alloy-primitives",
+ "derive_more",
+ "eyre",
+ "op-alloy-rpc-types-engine",
+ "rayon",
+ "reth-chain-state",
+ "reth-consensus",
+ "reth-engine-primitives",
+ "reth-engine-tree",
+ "reth-errors",
+ "reth-evm",
+ "reth-payload-primitives",
+ "reth-primitives-traits",
+ "reth-provider",
+ "reth-revm",
+ "reth-trie",
+ "reth-trie-parallel",
+ "revm-primitives 22.0.0",
+ "tracing",
+]
+
+[[package]]
 name = "base-flashblocks"
 version = "0.0.0"
 dependencies = [

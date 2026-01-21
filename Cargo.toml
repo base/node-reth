@@ -62,6 +62,7 @@ base-engine-ext = { path = "crates/shared/engine-ext" }
 base-access-lists = { path = "crates/shared/access-lists" }
 base-reth-rpc-types = { path = "crates/shared/reth-rpc-types" }
 base-flashblocks-node = { path = "crates/client/flashblocks-node" }
+base-engine-tree = { path = "crates/client/engine-tree" }
 
 # Client
 base-txpool = { path = "crates/client/txpool" }
@@ -329,3 +330,13 @@ hyper = { version = "1.7.0", features = ["http1"] }
 either = { version = "1.15.0", default-features = false }
 opentelemetry = { version = "0.31", features = ["trace"] }
 time = { version = "0.3.44", features = ["macros", "formatting", "parsing"] }
+crossbeam-channel = "0.5.13"
+mini-moka = "0.10"
+schnellru = "0.2"
+
+smallvec = "1"
+assert_matches = "1.5.0"
+criterion = { package = "codspeed-criterion-compat", version = "2.7" }
+metrics-util = { default-features = false, version = "0.20.0" }
+proptest = "1.7"
+rand_08 = { package = "rand", version = "0.8" }
