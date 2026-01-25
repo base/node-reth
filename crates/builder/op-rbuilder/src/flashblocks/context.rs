@@ -139,7 +139,7 @@ pub struct OpPayloadBuilderCtx {
     pub flashblock_execution_time_budget_us: Option<u128>,
     /// Block-level state root calculation time budget in microseconds.
     pub block_state_root_time_budget_us: Option<u128>,
-    /// Resource metering mode: off, observe, or enforce.
+    /// Resource metering mode: off, dry-run, or enforce.
     pub resource_metering_mode: ResourceMeteringMode,
     /// Unified transaction data store (backrun bundles + resource metering)
     pub tx_data_store: TxDataStore,
