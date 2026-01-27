@@ -20,20 +20,20 @@ use reth_engine_primitives::{
     ConfigureEngineEvm, ExecutableTxIterator, InvalidBlockHook, PayloadValidator,
 };
 use reth_engine_tree::tree::{
-    EngineApiTreeState, EngineValidator, ExecutionEnv, PayloadHandle, PayloadProcessor,
-    StateProviderBuilder, TreeConfig,
+    CachedStateProvider, EngineApiMetrics, EngineApiTreeState, EngineValidator, ExecutionEnv,
+    PayloadHandle, PayloadProcessor, StateProviderBuilder, TreeConfig,
     error::{InsertBlockError, InsertBlockErrorKind, InsertPayloadError},
     executor::WorkloadExecutor,
     instrumented_state::InstrumentedStateProvider,
     payload_validator::{BlockOrPayload, TreeCtx, ValidationOutcome},
-    precompile_cache::PrecompileCacheMap,
+    precompile_cache::{CachedPrecompile, CachedPrecompileMetrics, PrecompileCacheMap},
     receipt_root_task::{IndexedReceipt, ReceiptRootTaskHandle},
     sparse_trie::StateRootComputeOutcome,
 };
 use reth_errors::{BlockExecutionError, ProviderResult};
 use reth_evm::{
-    ConfigureEvm, EvmEnvFor, EvmFactory, ExecutionCtxFor, SpecFor,
-    block::{BlockExecutor, BlockExecutorFactory},
+    ConfigureEvm, EvmEnvFor, EvmFactory, ExecutionCtxFor, OnStateHook, SpecFor,
+    block::{BlockExecutor, BlockExecutorFactory, StateChangeSource},
     execute::ExecutableTxFor,
 };
 use reth_payload_primitives::{
@@ -47,12 +47,16 @@ use reth_provider::{
     BlockExecutionOutput, BlockNumReader, BlockReader, ChangeSetReader, DatabaseProviderFactory,
     DatabaseProviderROFactory, HashedPostStateProvider, ProviderError, PruneCheckpointReader,
     StageCheckpointReader, StateProvider, StateProviderFactory, StateReader,
-    providers::OverlayStateProviderFactory,
+    StorageChangeSetReader, providers::OverlayStateProviderFactory,
 };
-use reth_revm::{database::StateProviderDatabase, db::State};
+use reth_revm::{
+    database::StateProviderDatabase,
+    db::{State, states::bundle_state::BundleRetention},
+};
 use reth_trie::{HashedPostState, StateRoot, updates::TrieUpdates};
 use reth_trie_db::ChangesetCache;
 use reth_trie_parallel::root::{ParallelStateRoot, ParallelStateRootError};
+use revm::state::EvmState;
 use revm_primitives::Address;
 use tracing::{debug, debug_span, error, info, instrument, trace, warn};
 
@@ -105,6 +109,7 @@ where
                           + StageCheckpointReader
                           + PruneCheckpointReader
                           + ChangeSetReader
+                          + StorageChangeSetReader
                           + BlockNumReader,
         > + BlockReader<Header = N::BlockHeader>
         + ChangeSetReader
@@ -468,6 +473,7 @@ where
 
         let root_time = Instant::now();
         let mut maybe_state_root = None;
+        let mut state_root_task_failed = false;
 
         match strategy {
             StateRootStrategy::StateRootTask => {
@@ -486,10 +492,12 @@ where
                                 block_state_root = ?block.header().state_root(),
                                 "State root task returned incorrect state root"
                             );
+                            state_root_task_failed = true;
                         }
                     }
                     Err(error) => {
                         debug!(target: "engine::tree::payload_validator", %error, "State root task failed");
+                        state_root_task_failed = true;
                     }
                 }
             }
@@ -534,6 +542,11 @@ where
                 self.compute_state_root_serial(overlay_factory.clone(), &hashed_state),
                 block
             );
+
+            if state_root_task_failed {
+                self.metrics.block_validation.state_root_task_fallback_success_total.increment(1);
+            }
+
             (root, updates, root_time.elapsed())
         };
 
@@ -604,7 +617,13 @@ where
         Ok(())
     }
 
-    /// Executes a block with the given state provider
+    /// Executes a block with the given state provider.
+    ///
+    /// This method orchestrates block execution:
+    /// 1. Sets up the EVM with state database and precompile caching
+    /// 2. Spawns a background task for incremental receipt root computation
+    /// 3. Executes transactions with metrics collection via state hooks
+    /// 4. Merges state transitions and records execution metrics
     #[instrument(level = "debug", target = "engine::tree::payload_validator", skip_all)]
     #[expect(clippy::type_complexity)]
     fn execute_block<S, Err, T>(
@@ -690,29 +709,115 @@ where
         let task_handle = ReceiptRootTaskHandle::new(receipt_rx, result_tx);
         self.payload_processor.executor().spawn_blocking(move || task_handle.run(receipts_len));
 
+        // Wrap the state hook with metrics collection
+        let inner_hook = Box::new(handle.state_hook());
+        let state_hook =
+            MeteredStateHook { metrics: self.metrics.executor_metrics().clone(), inner_hook };
+
+        let transaction_count = input.transaction_count();
+        let executor = executor.with_state_hook(Some(Box::new(state_hook)));
+
         let execution_start = Instant::now();
-        let state_hook = Box::new(handle.state_hook());
-        let (output, senders) = self.metrics.execute_metered(
+
+        // Execute all transactions and finalize
+        let (executor, senders) = self.execute_transactions(
             executor,
-            handle.iter_transactions().map(|res| res.map_err(BlockExecutionError::other)),
-            input.transaction_count(),
-            state_hook,
-            |receipts| {
-                // Send the latest receipt to the background task for incremental root computation.
-                // The receipt is cloned here; encoding happens in the background thread.
-                if let Some(receipt) = receipts.last() {
-                    // Infer tx_index from the number of receipts collected so far
-                    let tx_index = receipts.len() - 1;
-                    let _ = receipt_tx.send(IndexedReceipt::new(tx_index, receipt.clone()));
-                }
-            },
+            transaction_count,
+            handle.iter_transactions(),
+            &receipt_tx,
         )?;
         drop(receipt_tx);
 
-        let execution_finish = Instant::now();
-        let execution_time = execution_finish.duration_since(execution_start);
-        debug!(target: "engine::tree::payload_validator", elapsed = ?execution_time, "Executed block");
+        // Finish execution and get the result
+        let post_exec_start = Instant::now();
+        let (_evm, result) = debug_span!(target: "engine::tree", "finish")
+            .in_scope(|| executor.finish())
+            .map(|(evm, result)| (evm.into_db(), result))?;
+        self.metrics.record_post_execution(post_exec_start.elapsed());
+
+        // Merge transitions into bundle state
+        debug_span!(target: "engine::tree", "merge transitions")
+            .in_scope(|| db.merge_transitions(BundleRetention::Reverts));
+
+        let output = BlockExecutionOutput { result, state: db.take_bundle() };
+
+        let execution_duration = execution_start.elapsed();
+        self.metrics.record_block_execution(&output, execution_duration);
+
+        debug!(target: "engine::tree::payload_validator", elapsed = ?execution_duration, "Executed block");
         Ok((output, senders, result_rx))
+    }
+
+    /// Executes transactions and collects senders, streaming receipts to a background task.
+    ///
+    /// This method handles:
+    /// - Applying pre-execution changes (e.g., beacon root updates)
+    /// - Executing each transaction with timing metrics
+    /// - Streaming receipts to the receipt root computation task
+    /// - Collecting transaction senders for later use
+    ///
+    /// Returns the executor (for finalization) and the collected senders.
+    fn execute_transactions<E, Tx, InnerTx, Err>(
+        &self,
+        mut executor: E,
+        transaction_count: usize,
+        transactions: impl Iterator<Item = Result<Tx, Err>>,
+        receipt_tx: &crossbeam_channel::Sender<IndexedReceipt<N::Receipt>>,
+    ) -> Result<(E, Vec<Address>), BlockExecutionError>
+    where
+        E: BlockExecutor<Receipt = N::Receipt>,
+        Tx: alloy_evm::block::ExecutableTx<E> + alloy_evm::RecoveredTx<InnerTx>,
+        InnerTx: TxHashRef,
+        Err: core::error::Error + Send + Sync + 'static,
+    {
+        let mut senders = Vec::with_capacity(transaction_count);
+
+        // Apply pre-execution changes (e.g., beacon root update)
+        let pre_exec_start = Instant::now();
+        debug_span!(target: "engine::tree", "pre execution")
+            .in_scope(|| executor.apply_pre_execution_changes())?;
+        self.metrics.record_pre_execution(pre_exec_start.elapsed());
+
+        // Execute transactions
+        let exec_span = debug_span!(target: "engine::tree", "execution").entered();
+        let mut transactions = transactions.into_iter();
+        loop {
+            // Measure time spent waiting for next transaction from iterator
+            // (e.g., parallel signature recovery)
+            let wait_start = Instant::now();
+            let Some(tx_result) = transactions.next() else { break };
+            self.metrics.record_transaction_wait(wait_start.elapsed());
+
+            let tx = tx_result.map_err(BlockExecutionError::other)?;
+            let tx_signer = *<Tx as alloy_evm::RecoveredTx<InnerTx>>::signer(&tx);
+            let tx_hash = <Tx as alloy_evm::RecoveredTx<InnerTx>>::tx(&tx).tx_hash();
+
+            senders.push(tx_signer);
+
+            let span = debug_span!(
+                target: "engine::tree",
+                "execute tx",
+                ?tx_hash,
+                gas_used = tracing::field::Empty,
+            );
+            let enter = span.entered();
+            trace!(target: "engine::tree", "Executing transaction");
+
+            let tx_start = Instant::now();
+            let gas_used = executor.execute_transaction(tx)?;
+            self.metrics.record_transaction_execution(tx_start.elapsed());
+
+            // Send the latest receipt to the background task for incremental root computation
+            if let Some(receipt) = executor.receipts().last() {
+                let tx_index = executor.receipts().len() - 1;
+                let _ = receipt_tx.send(IndexedReceipt::new(tx_index, receipt.clone()));
+            }
+
+            enter.record("gas_used", gas_used);
+        }
+        drop(exec_span);
+
+        Ok((executor, senders))
     }
 
     /// Compute state root for the given hashed post state in parallel.
@@ -871,8 +976,8 @@ where
         block_access_list: Option<Arc<BlockAccessList>>,
     ) -> Result<
         PayloadHandle<
-            impl ExecutableTxFor<Evm> + use<N, P, Evm, V, T>,
-            impl core::error::Error + Send + Sync + 'static + use<N, P, Evm, V, T>,
+            impl ExecutableTxFor<Evm> + use<N, P, Evm, V, T, C>,
+            impl core::error::Error + Send + Sync + 'static + use<N, P, Evm, V, T, C>,
             N::Receipt,
         >,
         InsertBlockErrorKind,
@@ -1157,6 +1262,7 @@ where
             Provider: BlockReader
                           + StageCheckpointReader
                           + PruneCheckpointReader
+                          + StorageChangeSetReader
                           + ChangeSetReader
                           + BlockNumReader,
         > + BlockReader<Header = N::BlockHeader>
@@ -1169,8 +1275,8 @@ where
         + 'static,
     N: NodePrimitives,
     V: PayloadValidator<Types, Block = N::Block>,
-    Evm: ConfigureEngineEvm<Types::ExecutionData, Primitives = N> + 'static,
-    Types: PayloadTypes<BuiltPayload: BuiltPayload<Primitives = N>>,
+    Evm: ConfigureEngineEvm<OpExecutionData, Primitives = N> + 'static,
+    Types: PayloadTypes<BuiltPayload: BuiltPayload<Primitives = N>, ExecutionData = OpExecutionData>,
     C: CachedExecutionProvider<N::Receipt, <<Evm::BlockExecutorFactory as BlockExecutorFactory>::EvmFactory as EvmFactory>::HaltReason> + Clone + Send + Sync + 'static,
 {
     fn validate_payload_attributes_against_header(
@@ -1222,4 +1328,26 @@ enum StateRootStrategy {
     Parallel,
     /// Fall back to synchronous computation via the state provider.
     Synchronous,
+}
+
+/// Wrapper struct that combines metrics and state hook
+struct MeteredStateHook {
+    metrics: reth_evm::metrics::ExecutorMetrics,
+    inner_hook: Box<dyn OnStateHook>,
+}
+
+impl OnStateHook for MeteredStateHook {
+    fn on_state(&mut self, source: StateChangeSource, state: &EvmState) {
+        // Update the metrics for the number of accounts, storage slots and bytecodes loaded
+        let accounts = state.keys().len();
+        let storage_slots = state.values().map(|account| account.storage.len()).sum::<usize>();
+        let bytecodes = state.values().filter(|account| !account.info.is_empty_code_hash()).count();
+
+        self.metrics.accounts_loaded_histogram.record(accounts as f64);
+        self.metrics.storage_slots_loaded_histogram.record(storage_slots as f64);
+        self.metrics.bytecodes_loaded_histogram.record(bytecodes as f64);
+
+        // Call the original state hook
+        self.inner_hook.on_state(source, state);
+    }
 }

@@ -1,8 +1,10 @@
 use alloy_consensus::transaction::TxHashRef;
+use alloy_op_evm::block::OpTxResult;
+use op_alloy_consensus::OpTxType;
 use reth_errors::BlockExecutionError;
 use reth_evm::{
-    ConfigureEvm, Evm,
-    block::{BlockExecutor, BlockExecutorFor, ExecutableTx},
+    ConfigureEvm, Evm, RecoveredTx,
+    block::{BlockExecutor, BlockExecutorFor, ExecutableTx, TxResult},
     execute::ExecutableTxFor,
 };
 use reth_provider::ExecutionOutcome;
@@ -10,30 +12,26 @@ use reth_revm::State;
 use revm::{Database, context::result::ResultAndState};
 use revm_primitives::B256;
 
-use crate::tree::error::InsertBlockErrorKind;
-
-pub trait CachedExecutionProvider<Receipt, HaltReason> {
+pub trait CachedExecutionProvider<Result> {
     // TODO: what do we need to check to ensure the tx execution is valid?
     fn get_cached_execution_for_tx<'a>(
         &self,
         start_state_root: &B256,
         prev_cached_hash: Option<&B256>,
         tx_hash: &B256,
-    ) -> Option<ResultAndState<HaltReason>>;
+    ) -> Option<Result>;
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct NoopCachedExecutionProvider;
 
-impl<Receipt, HaltReason> CachedExecutionProvider<Receipt, HaltReason>
-    for NoopCachedExecutionProvider
-{
+impl<Result> CachedExecutionProvider<Result> for NoopCachedExecutionProvider {
     fn get_cached_execution_for_tx<'a>(
         &self,
         start_state_root: &B256,
         prev_cached_hash: Option<&B256>,
         tx_hash: &B256,
-    ) -> Option<ResultAndState<HaltReason>> {
+    ) -> Option<Result> {
         None
     }
 }
@@ -61,32 +59,39 @@ impl<'a, E, C, DB> BlockExecutor for CachedExecutor<E, C>
 where
     DB: Database + 'a,
     E: BlockExecutor<Transaction: TxHashRef, Evm: Evm<DB = &'a mut State<DB>>>,
-    C: CachedExecutionProvider<E::Receipt, <E::Evm as Evm>::HaltReason>,
+    C: CachedExecutionProvider<E::Result>,
 {
     type Transaction = E::Transaction;
     type Receipt = E::Receipt;
     type Evm = E::Evm;
+    type Result = E::Result;
+
+    fn receipts(&self) -> &[Self::Receipt] {
+        self.executor.receipts()
+    }
 
     fn execute_transaction_without_commit(
         &mut self,
         executing_tx: impl ExecutableTx<Self>,
-    ) -> Result<ResultAndState<<Self::Evm as Evm>::HaltReason>, BlockExecutionError> {
-
+    ) -> Result<Self::Result, BlockExecutionError> {
         if !self.all_txs_cached {
             return self.executor.execute_transaction_without_commit(executing_tx);
         }
 
+        let (_, executing_tx_recovered) = executing_tx.into_parts();
+
         // find tx just before this one
-        let prev_tx_hash = self.txs.iter().take_while(|tx| *tx != executing_tx.tx().tx_hash()).last();
-        
+        let prev_tx_hash =
+            self.txs.iter().take_while(|tx| *tx != executing_tx_recovered.tx().tx_hash()).last();
+
         let cached_execution = self.cached_execution_provider.get_cached_execution_for_tx(
             &self.block_state_root,
             prev_tx_hash,
-            &executing_tx.tx().tx_hash(),
+            &executing_tx_recovered.tx().tx_hash(),
         );
         if let Some(cached_execution) = cached_execution {
             // load accounts into cache
-            for (address, _) in cached_execution.state.iter() {
+            for (address, _) in cached_execution.result().state.iter() {
                 let _ = self.executor.evm_mut().db_mut().load_cache_account(*address);
             }
             return Ok(cached_execution);
@@ -99,12 +104,8 @@ where
         self.executor.apply_pre_execution_changes()
     }
 
-    fn commit_transaction(
-        &mut self,
-        output: ResultAndState<<Self::Evm as Evm>::HaltReason>,
-        tx: impl ExecutableTx<Self>,
-    ) -> Result<u64, BlockExecutionError> {
-        self.executor.commit_transaction(output, tx)
+    fn commit_transaction(&mut self, output: Self::Result) -> Result<u64, BlockExecutionError> {
+        self.executor.commit_transaction(output)
     }
 
     fn finish(

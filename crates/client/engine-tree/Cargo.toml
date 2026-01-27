@@ -26,9 +26,12 @@ reth-trie.workspace = true
 reth-trie-parallel.workspace = true
 reth-trie-db.workspace = true
 
+revm.workspace = true
 revm-primitives.workspace = true
-op-alloy-rpc-types-engine.workspace = true
 
+op-alloy-rpc-types-engine.workspace = true
+op-alloy-consensus.workspace = true
+alloy-op-evm.workspace = true
 
 alloy-consensus.workspace = true
 alloy-eip7928.workspace = true

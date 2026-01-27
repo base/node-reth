@@ -272,6 +272,7 @@ impl PendingBlocks {
         self.transaction_receipts.get(&tx_hash).cloned()
     }
 
+    /// Returns the execution result for a transaction.
     pub fn get_transaction_result(&self, tx_hash: TxHash) -> Option<ExecutionResult<OpHaltReason>> {
         self.transaction_results.get(&tx_hash).cloned()
     }

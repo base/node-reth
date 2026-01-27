@@ -49,3 +49,9 @@ revm-primitives.workspace = true
 tracing.workspace = true
 eyre.workspace = true
 derive_more.workspace = true
+
+op-alloy-consensus.workspace = true
+op-alloy-rpc-types-engine.workspace = true
+op-revm.workspace = true
+base-engine-tree.workspace = true
+revm.workspace = true

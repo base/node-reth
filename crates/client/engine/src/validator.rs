@@ -3,36 +3,23 @@
 use std::{fmt::Debug, sync::Arc};
 
 use alloy_evm::EvmFactory;
+use base_engine_tree::{base::BaseEngineValidator, cached_execution::CachedExecutionProvider};
 use base_flashblocks::{FlashblocksAPI, FlashblocksState};
-use op_alloy_consensus::OpReceipt;
 use op_alloy_rpc_types_engine::OpExecutionData;
 use op_revm::OpHaltReason;
 use reth_chainspec::EthChainSpec;
-use reth_consensus::FullConsensus;
-use reth_engine_primitives::{ConfigureEngineEvm, InvalidBlockHook, PayloadValidator};
-use reth_engine_tree::tree::{
-    BaseEngineValidator, CachedExecutionProvider, EngineValidator,
-    error::InsertPayloadError,
-    payload_validator::{BlockOrPayload, TreeCtx, ValidationOutcome},
-};
+use reth_engine_primitives::ConfigureEngineEvm;
 use reth_evm::{ConfigureEvm, block::BlockExecutorFactory};
 use reth_node_api::{
-    AddOnsContext, BlockTy, FullNodeComponents, FullNodeTypes, InvalidPayloadAttributesError,
-    NodeTypes, PayloadTypes, TreeConfig,
+    AddOnsContext, BlockTy, FullNodeComponents, FullNodeTypes, NodeTypes, PayloadTypes, TreeConfig,
 };
 use reth_node_builder::{
     invalid_block_hook::InvalidBlockHookExt,
     rpc::{ChangesetCache, EngineValidatorBuilder, PayloadValidatorBuilder},
 };
-use reth_payload_primitives::{BuiltPayload, NewPayloadError};
-use reth_primitives_traits::{NodePrimitives, SealedBlock};
-use reth_provider::{
-    BlockNumReader, BlockReader, ChangeSetReader, DatabaseProviderFactory, HashedPostStateProvider,
-    PruneCheckpointReader, StageCheckpointReader, StateProviderFactory, StateReader,
-};
-use revm::context::result::{ExecutionResult, HaltReason, ResultAndState, SuccessReason};
+use reth_provider::BlockNumReader;
+use revm::context::result::ResultAndState;
 use revm_primitives::B256;
-use tracing::instrument;
 
 #[derive(Debug, Clone)]
 pub struct FlashblocksCachedExecutionProvider<P> {
@@ -183,6 +170,7 @@ where
                 ctx.node.provider().clone(),
                 self.flashblocks_state.clone(),
             ),
+            changeset_cache,
         ))
     }
 }
