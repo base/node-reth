@@ -1956,6 +1956,7 @@ dependencies = [
  "alloy-eips",
  "alloy-evm",
  "alloy-primitives",
+ "crossbeam-channel",
  "derive_more",
  "eyre",
  "op-alloy-rpc-types-engine",
@@ -1971,8 +1972,10 @@ dependencies = [
  "reth-provider",
  "reth-revm",
  "reth-trie",
+ "reth-trie-db",
  "reth-trie-parallel",
  "revm-primitives 22.0.0",
+ "tokio",
  "tracing",
 ]
 

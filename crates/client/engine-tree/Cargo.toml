@@ -24,11 +24,9 @@ reth-provider.workspace = true
 reth-revm.workspace = true
 reth-trie.workspace = true
 reth-trie-parallel.workspace = true
+reth-trie-db.workspace = true
 
 revm-primitives.workspace = true
-tracing.workspace = true
-eyre.workspace = true
-derive_more.workspace = true
 op-alloy-rpc-types-engine.workspace = true
 
 
@@ -39,3 +37,8 @@ alloy-evm.workspace = true
 alloy-primitives.workspace = true
 
 rayon.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+eyre.workspace = true
+derive_more.workspace = true
+crossbeam-channel.workspace = true
