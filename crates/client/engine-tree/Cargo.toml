@@ -25,6 +25,10 @@ reth-revm.workspace = true
 reth-trie.workspace = true
 reth-trie-parallel.workspace = true
 reth-trie-db.workspace = true
+reth-op.workspace = true
+op-revm.workspace = true
+reth-optimism-primitives.workspace = true
+reth-optimism-evm.workspace = true
 
 revm.workspace = true
 revm-primitives.workspace = true
@@ -42,6 +46,5 @@ alloy-primitives.workspace = true
 rayon.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-eyre.workspace = true
 derive_more.workspace = true
 crossbeam-channel.workspace = true

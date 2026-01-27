@@ -1,19 +1,25 @@
-use alloy_consensus::transaction::TxHashRef;
-use alloy_op_evm::block::OpTxResult;
-use op_alloy_consensus::OpTxType;
+//! Cached execution provider and executor.
+
+use std::{fmt::Debug, sync::Arc};
+
+use alloy_op_evm::{OpBlockExecutor, block::OpTxResult};
+use op_alloy_consensus::{OpTxEnvelope, OpTxType};
+use op_revm::OpTransaction;
 use reth_errors::BlockExecutionError;
 use reth_evm::{
-    ConfigureEvm, Evm, RecoveredTx,
-    block::{BlockExecutor, BlockExecutorFor, ExecutableTx, TxResult},
-    execute::ExecutableTxFor,
+    Evm, RecoveredTx,
+    block::{BlockExecutor, ExecutableTx, TxResult},
 };
-use reth_provider::ExecutionOutcome;
+use reth_op::{OpReceipt, chainspec::OpChainSpec};
+use reth_optimism_evm::OpRethReceiptBuilder;
+use reth_primitives_traits::Recovered;
 use reth_revm::State;
-use revm::{Database, context::result::ResultAndState};
+use revm::{Database, context::TxEnv};
 use revm_primitives::B256;
 
+/// Trait for providers that fetch cached execution results for transactions.
 pub trait CachedExecutionProvider<Result> {
-    // TODO: what do we need to check to ensure the tx execution is valid?
+    /// Gets the cached execution result for a transaction.
     fn get_cached_execution_for_tx<'a>(
         &self,
         start_state_root: &B256,
@@ -22,22 +28,25 @@ pub trait CachedExecutionProvider<Result> {
     ) -> Option<Result>;
 }
 
+/// Default implementation of [`CachedExecutionProvider`] that does not provide any cached execution.
 #[derive(Debug, Clone, Default)]
 pub struct NoopCachedExecutionProvider;
 
 impl<Result> CachedExecutionProvider<Result> for NoopCachedExecutionProvider {
     fn get_cached_execution_for_tx<'a>(
         &self,
-        start_state_root: &B256,
-        prev_cached_hash: Option<&B256>,
-        tx_hash: &B256,
+        _start_state_root: &B256,
+        _prev_cached_hash: Option<&B256>,
+        _tx_hash: &B256,
     ) -> Option<Result> {
         None
     }
 }
 
+/// Executor that fetches cached execution results for transactions.
+#[derive(Debug)]
 pub struct CachedExecutor<E, C> {
-    executor: E,
+    executor: OpBlockExecutor<E, OpRethReceiptBuilder, Arc<OpChainSpec>>,
     cached_execution_provider: C,
     txs: Vec<B256>,
     block_state_root: B256,
@@ -45,8 +54,9 @@ pub struct CachedExecutor<E, C> {
 }
 
 impl<E, C> CachedExecutor<E, C> {
+    /// Creates a new [`CachedExecutor`].
     pub fn new(
-        executor: E,
+        executor: OpBlockExecutor<E, OpRethReceiptBuilder, Arc<OpChainSpec>>,
         cached_execution_provider: C,
         txs: Vec<B256>,
         block_state_root: B256,
@@ -55,16 +65,16 @@ impl<E, C> CachedExecutor<E, C> {
     }
 }
 
-impl<'a, E, C, DB> BlockExecutor for CachedExecutor<E, C>
+impl<'a, DB, E, C> BlockExecutor for CachedExecutor<E, C>
 where
-    DB: Database + 'a,
-    E: BlockExecutor<Transaction: TxHashRef, Evm: Evm<DB = &'a mut State<DB>>>,
-    C: CachedExecutionProvider<E::Result>,
+    DB: Database + alloy_evm::Database + 'a,
+    E: Evm<DB = &'a mut State<DB>, Tx = OpTransaction<TxEnv>>,
+    C: CachedExecutionProvider<OpTxResult<E::HaltReason, OpTxType>>,
 {
-    type Transaction = E::Transaction;
-    type Receipt = E::Receipt;
-    type Evm = E::Evm;
-    type Result = E::Result;
+    type Transaction = OpTxEnvelope;
+    type Receipt = OpReceipt;
+    type Evm = E;
+    type Result = OpTxResult<E::HaltReason, OpTxType>;
 
     fn receipts(&self) -> &[Self::Receipt] {
         self.executor.receipts()
@@ -78,11 +88,11 @@ where
             return self.executor.execute_transaction_without_commit(executing_tx);
         }
 
-        let (_, executing_tx_recovered) = executing_tx.into_parts();
+        let executing_tx_recovered = executing_tx.into_parts().1;
 
         // find tx just before this one
         let prev_tx_hash =
-            self.txs.iter().take_while(|tx| *tx != executing_tx_recovered.tx().tx_hash()).last();
+            self.txs.iter().take_while(|tx| **tx != executing_tx_recovered.tx().tx_hash()).last();
 
         let cached_execution = self.cached_execution_provider.get_cached_execution_for_tx(
             &self.block_state_root,
@@ -97,7 +107,10 @@ where
             return Ok(cached_execution);
         }
         self.all_txs_cached = false;
-        self.executor.execute_transaction_without_commit(executing_tx)
+        self.executor.execute_transaction_without_commit(Recovered::new_unchecked(
+            executing_tx_recovered.tx(),
+            *executing_tx_recovered.signer(),
+        ))
     }
 
     fn apply_pre_execution_changes(&mut self) -> Result<(), BlockExecutionError> {

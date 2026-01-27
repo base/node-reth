@@ -162,6 +162,7 @@ reth-optimism-primitives = { git = "https://github.com/paradigmxyz/reth", tag = 
 reth-basic-payload-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
 reth-payload-builder-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
 reth-optimism-payload-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
+reth-op = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
 
 # revm
 revm = { version = "34.0.0", features = [

@@ -1820,6 +1820,7 @@ dependencies = [
  "alloy-consensus",
  "alloy-eips",
  "alloy-evm",
+ "alloy-op-evm",
  "alloy-primitives",
  "alloy-rpc-types",
  "alloy-rpc-types-engine",
@@ -1842,6 +1843,9 @@ dependencies = [
  "reth-node-api",
  "reth-node-builder",
  "reth-node-core",
+ "reth-optimism-chainspec",
+ "reth-optimism-node",
+ "reth-optimism-primitives",
  "reth-payload-builder",
  "reth-payload-primitives",
  "reth-primitives-traits",
@@ -1966,9 +1970,9 @@ dependencies = [
  "alloy-primitives",
  "crossbeam-channel",
  "derive_more",
- "eyre",
  "op-alloy-consensus",
  "op-alloy-rpc-types-engine",
+ "op-revm 15.0.0",
  "rayon",
  "reth-chain-state",
  "reth-consensus",
@@ -1976,6 +1980,9 @@ dependencies = [
  "reth-engine-tree",
  "reth-errors",
  "reth-evm",
+ "reth-op",
+ "reth-optimism-evm",
+ "reth-optimism-primitives",
  "reth-payload-primitives",
  "reth-primitives-traits",
  "reth-provider",
@@ -9149,6 +9156,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "reth-consensus-common"
+version = "1.10.2"
+source = "git+https://github.com/paradigmxyz/reth?tag=v1.10.2#8e3b5e6a99439561b73c5dd31bd3eced2e994d60"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "reth-chainspec",
+ "reth-consensus",
+ "reth-primitives-traits",
+]
+
+[[package]]
 name = "reth-consensus-debug-client"
 version = "1.10.2"
 dependencies = [
@@ -9728,7 +9747,7 @@ dependencies = [
  "alloy-primitives",
  "reth-chainspec",
  "reth-consensus",
- "reth-consensus-common",
+ "reth-consensus-common 1.10.2",
  "reth-execution-types",
  "reth-primitives-traits",
  "tracing",
@@ -9774,7 +9793,7 @@ dependencies = [
  "alloy-rpc-types-engine",
  "reth-basic-payload-builder",
  "reth-chainspec",
- "reth-consensus-common",
+ "reth-consensus-common 1.10.2",
  "reth-errors",
  "reth-ethereum-primitives",
  "reth-evm",
@@ -10460,6 +10479,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "reth-op"
+version = "1.10.2"
+source = "git+https://github.com/paradigmxyz/reth?tag=v1.10.2#8e3b5e6a99439561b73c5dd31bd3eced2e994d60"
+dependencies = [
+ "reth-chainspec",
+ "reth-consensus",
+ "reth-consensus-common 1.10.2 (git+https://github.com/paradigmxyz/reth?tag=v1.10.2)",
+ "reth-evm",
+ "reth-optimism-chainspec",
+ "reth-optimism-consensus",
+ "reth-optimism-evm",
+ "reth-optimism-primitives",
+ "reth-primitives-traits",
+ "reth-revm",
+ "reth-storage-api",
+]
+
+[[package]]
 name = "reth-optimism-chainspec"
 version = "1.10.2"
 dependencies = [
@@ -10543,7 +10580,7 @@ dependencies = [
  "alloy-trie",
  "reth-chainspec",
  "reth-consensus",
- "reth-consensus-common",
+ "reth-consensus-common 1.10.2",
  "reth-execution-types",
  "reth-optimism-chainspec",
  "reth-optimism-forks",
@@ -11091,7 +11128,7 @@ dependencies = [
  "reth-chain-state",
  "reth-chainspec",
  "reth-consensus",
- "reth-consensus-common",
+ "reth-consensus-common 1.10.2",
  "reth-engine-primitives",
  "reth-errors",
  "reth-ethereum-engine-primitives",

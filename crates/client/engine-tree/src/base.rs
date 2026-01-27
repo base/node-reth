@@ -7,12 +7,18 @@ use std::{
     time::Instant,
 };
 
-use alloy_consensus::transaction::{Either, TxHashRef};
+use alloy_consensus::{
+    Header,
+    transaction::{Either, TxHashRef},
+};
 use alloy_eip7928::BlockAccessList;
 use alloy_eips::Decodable2718;
 use alloy_evm::Evm;
+use alloy_op_evm::{OpBlockExecutor, OpBlockExecutorFactory, OpEvmFactory, block::OpTxResult};
 use alloy_primitives::B256;
+use op_alloy_consensus::OpBlock;
 use op_alloy_rpc_types_engine::OpExecutionData;
+use op_revm::OpHaltReason;
 use rayon::prelude::*;
 use reth_chain_state::{DeferredTrieData, ExecutedBlock, LazyOverlay};
 use reth_consensus::{ConsensusError, FullConsensus, ReceiptRootBloom};
@@ -32,10 +38,13 @@ use reth_engine_tree::tree::{
 };
 use reth_errors::{BlockExecutionError, ProviderResult};
 use reth_evm::{
-    ConfigureEvm, EvmEnvFor, EvmFactory, ExecutionCtxFor, OnStateHook, SpecFor,
-    block::{BlockExecutor, BlockExecutorFactory, StateChangeSource},
+    ConfigureEvm, EvmEnvFor, ExecutionCtxFor, OnStateHook, SpecFor,
+    block::{BlockExecutor, StateChangeSource},
     execute::ExecutableTxFor,
 };
+use reth_op::{OpReceipt, OpTransactionSigned, OpTxType, chainspec::OpChainSpec};
+use reth_optimism_evm::OpRethReceiptBuilder;
+use reth_optimism_primitives::OpPrimitives;
 use reth_payload_primitives::{
     BuiltPayload, InvalidPayloadAttributesError, NewPayloadError, PayloadTypes,
 };
@@ -44,10 +53,11 @@ use reth_primitives_traits::{
     SealedHeader, SignerRecoverable,
 };
 use reth_provider::{
-    BlockExecutionOutput, BlockNumReader, BlockReader, ChangeSetReader, DatabaseProviderFactory,
-    DatabaseProviderROFactory, HashedPostStateProvider, ProviderError, PruneCheckpointReader,
-    StageCheckpointReader, StateProvider, StateProviderFactory, StateReader,
-    StorageChangeSetReader, providers::OverlayStateProviderFactory,
+    BlockExecutionOutput, BlockExecutionResult, BlockNumReader, BlockReader, ChainSpecProvider,
+    ChangeSetReader, DatabaseProviderFactory, DatabaseProviderROFactory, HashedPostStateProvider,
+    ProviderError, PruneCheckpointReader, StageCheckpointReader, StateProvider,
+    StateProviderFactory, StateReader, StorageChangeSetReader,
+    providers::OverlayStateProviderFactory,
 };
 use reth_revm::{
     database::StateProviderDatabase,
@@ -101,9 +111,8 @@ where
     changeset_cache: ChangesetCache,
 }
 
-impl<N, P, Evm, V, C> BaseEngineValidator<P, Evm, V, C>
+impl<P, Evm, V, C> BaseEngineValidator<P, Evm, V, C>
 where
-    N: NodePrimitives,
     P: DatabaseProviderFactory<
             Provider: BlockReader
                           + StageCheckpointReader
@@ -111,26 +120,34 @@ where
                           + ChangeSetReader
                           + StorageChangeSetReader
                           + BlockNumReader,
-        > + BlockReader<Header = N::BlockHeader>
+        > + BlockReader<Header = <OpPrimitives as NodePrimitives>::BlockHeader>
         + ChangeSetReader
         + BlockNumReader
         + StateProviderFactory
         + StateReader
         + HashedPostStateProvider
+        + ChainSpecProvider<ChainSpec = OpChainSpec>
         + Clone
         + 'static,
-    Evm: ConfigureEvm<Primitives = N> + 'static,
-    C: CachedExecutionProvider<N::Receipt, <<Evm::BlockExecutorFactory as BlockExecutorFactory>::EvmFactory as EvmFactory>::HaltReason> + Clone,
+    Evm: ConfigureEvm<
+            Primitives = OpPrimitives,
+            BlockExecutorFactory = OpBlockExecutorFactory<
+                OpRethReceiptBuilder,
+                Arc<OpChainSpec>,
+                OpEvmFactory,
+            >,
+        > + 'static,
+    C: CachedExecutionProvider<OpTxResult<OpHaltReason, OpTxType>> + Clone,
 {
     /// Creates a new `TreePayloadValidator`.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         provider: P,
-        consensus: Arc<dyn FullConsensus<N>>,
+        consensus: Arc<dyn FullConsensus<OpPrimitives>>,
         evm_config: Evm,
         validator: V,
         config: TreeConfig,
-        invalid_block_hook: Box<dyn InvalidBlockHook<N>>,
+        invalid_block_hook: Box<dyn InvalidBlockHook<OpPrimitives>>,
         cached_execution_provider: C,
         changeset_cache: ChangesetCache,
     ) -> Self {
@@ -159,12 +176,17 @@ where
 
     /// Converts a [`BlockOrPayload`] to a recovered block.
     #[instrument(level = "debug", target = "engine::tree::payload_validator", skip_all)]
-    pub fn convert_to_block<T: PayloadTypes<BuiltPayload: BuiltPayload<Primitives = N>, ExecutionData = OpExecutionData>>(
+    pub fn convert_to_block<
+        T: PayloadTypes<
+                BuiltPayload: BuiltPayload<Primitives = OpPrimitives>,
+                ExecutionData = OpExecutionData,
+            >,
+    >(
         &self,
         input: BlockOrPayload<T>,
-    ) -> Result<SealedBlock<N::Block>, NewPayloadError>
+    ) -> Result<SealedBlock<OpBlock>, NewPayloadError>
     where
-        V: PayloadValidator<T, Block = N::Block>,
+        V: PayloadValidator<T, Block = OpBlock>,
     {
         match input {
             BlockOrPayload::Payload(payload) => self.validator.convert_payload_to_block(payload),
@@ -173,13 +195,18 @@ where
     }
 
     /// Returns EVM environment for the given payload or block.
-    pub fn evm_env_for<T: PayloadTypes<BuiltPayload: BuiltPayload<Primitives = N>, ExecutionData = OpExecutionData>>(
+    pub fn evm_env_for<
+        T: PayloadTypes<
+                BuiltPayload: BuiltPayload<Primitives = OpPrimitives>,
+                ExecutionData = OpExecutionData,
+            >,
+    >(
         &self,
         input: &BlockOrPayload<T>,
     ) -> Result<EvmEnvFor<Evm>, Evm::Error>
     where
-        V: PayloadValidator<T, Block = N::Block>,
-        Evm: ConfigureEngineEvm<OpExecutionData, Primitives = N>,
+        V: PayloadValidator<T, Block = OpBlock>,
+        Evm: ConfigureEngineEvm<OpExecutionData, Primitives = OpPrimitives>,
     {
         match input {
             BlockOrPayload::Payload(payload) => Ok(self.evm_config.evm_env_for_payload(payload)?),
@@ -188,13 +215,19 @@ where
     }
 
     /// Returns [`ExecutableTxIterator`] for the given payload or block.
-    pub fn tx_iterator_for<'a, T: PayloadTypes<BuiltPayload: BuiltPayload<Primitives = N>, ExecutionData = OpExecutionData>>(
+    pub fn tx_iterator_for<
+        'a,
+        T: PayloadTypes<
+                BuiltPayload: BuiltPayload<Primitives = OpPrimitives>,
+                ExecutionData = OpExecutionData,
+            >,
+    >(
         &'a self,
         input: &'a BlockOrPayload<T>,
     ) -> Result<impl ExecutableTxIterator<Evm>, NewPayloadError>
     where
-        V: PayloadValidator<T, Block = N::Block>,
-        Evm: ConfigureEngineEvm<OpExecutionData, Primitives = N>,
+        V: PayloadValidator<T, Block = OpBlock>,
+        Evm: ConfigureEngineEvm<OpExecutionData, Primitives = OpPrimitives>,
     {
         match input {
             BlockOrPayload::Payload(payload) => {
@@ -217,7 +250,7 @@ where
                 let iter = Either::Right(
                     block.body().clone_transactions().into_par_iter().map(Either::Right),
                 );
-                let convert = move |tx: Either<_, N::SignedTx>| {
+                let convert = move |tx: Either<_, OpTransactionSigned>| {
                     let Either::Right(tx) = tx else { unreachable!() };
                     tx.try_into_recovered().map(Either::Right).map_err(Either::Right)
                 };
@@ -228,13 +261,19 @@ where
     }
 
     /// Returns a [`ExecutionCtxFor`] for the given payload or block.
-    pub fn execution_ctx_for<'a, T: PayloadTypes<BuiltPayload: BuiltPayload<Primitives = N>, ExecutionData = OpExecutionData>>(
+    pub fn execution_ctx_for<
+        'a,
+        T: PayloadTypes<
+                BuiltPayload: BuiltPayload<Primitives = OpPrimitives>,
+                ExecutionData = OpExecutionData,
+            >,
+    >(
         &self,
         input: &'a BlockOrPayload<T>,
     ) -> Result<ExecutionCtxFor<'a, Evm>, Evm::Error>
     where
-        V: PayloadValidator<T, Block = N::Block>,
-        Evm: ConfigureEngineEvm<OpExecutionData, Primitives = N>,
+        V: PayloadValidator<T, Block = OpBlock>,
+        Evm: ConfigureEngineEvm<OpExecutionData, Primitives = OpPrimitives>,
     {
         match input {
             BlockOrPayload::Payload(payload) => Ok(self.evm_config.context_for_payload(payload)?),
@@ -246,14 +285,19 @@ where
     ///
     /// When an execution error occurs, this function checks if there are any header validation
     /// errors that should be reported instead, as header validation errors have higher priority.
-    fn handle_execution_error<T: PayloadTypes<BuiltPayload: BuiltPayload<Primitives = N>, ExecutionData = OpExecutionData>>(
+    fn handle_execution_error<
+        T: PayloadTypes<
+                BuiltPayload: BuiltPayload<Primitives = OpPrimitives>,
+                ExecutionData = OpExecutionData,
+            >,
+    >(
         &self,
         input: BlockOrPayload<T>,
         execution_err: InsertBlockErrorKind,
-        parent_block: &SealedHeader<N::BlockHeader>,
-    ) -> Result<ExecutedBlock<N>, InsertPayloadError<N::Block>>
+        parent_block: &SealedHeader<Header>,
+    ) -> Result<ExecutedBlock<OpPrimitives>, InsertPayloadError<OpBlock>>
     where
-        V: PayloadValidator<T, Block = N::Block>,
+        V: PayloadValidator<T, Block = OpBlock>,
     {
         debug!(
             target: "engine::tree::payload_validator",
@@ -300,14 +344,19 @@ where
             type_name = ?input.type_name(),
         )
     )]
-    pub fn validate_block_with_state<T: PayloadTypes<BuiltPayload: BuiltPayload<Primitives = N>, ExecutionData = OpExecutionData>>(
+    pub fn validate_block_with_state<
+        T: PayloadTypes<
+                BuiltPayload: BuiltPayload<Primitives = OpPrimitives>,
+                ExecutionData = OpExecutionData,
+            >,
+    >(
         &mut self,
         input: BlockOrPayload<T>,
-        mut ctx: TreeCtx<'_, N>,
-    ) -> ValidationOutcome<N, InsertPayloadError<N::Block>>
+        mut ctx: TreeCtx<'_, OpPrimitives>,
+    ) -> ValidationOutcome<OpPrimitives, InsertPayloadError<OpBlock>>
     where
-        V: PayloadValidator<T, Block = N::Block>,
-        Evm: ConfigureEngineEvm<OpExecutionData, Primitives = N>,
+        V: PayloadValidator<T, Block = OpBlock>,
+        Evm: ConfigureEngineEvm<OpExecutionData, Primitives = OpPrimitives>,
     {
         /// A helper macro that returns the block in case there was an error
         /// This macro is used for early returns before block conversion
@@ -592,8 +641,8 @@ where
     fn sealed_header_by_hash(
         &self,
         hash: B256,
-        state: &EngineApiTreeState<N>,
-    ) -> ProviderResult<Option<SealedHeader<N::BlockHeader>>> {
+        state: &EngineApiTreeState<OpPrimitives>,
+    ) -> ProviderResult<Option<SealedHeader<Header>>> {
         // check memory first
         let header = state.tree_state.sealed_header_by_hash(&hash);
 
@@ -603,7 +652,7 @@ where
     /// Validate if block is correct and satisfies all the consensus rules that concern the header
     /// and block body itself.
     #[instrument(level = "debug", target = "engine::tree::payload_validator", skip_all)]
-    fn validate_block_inner(&self, block: &SealedBlock<N::Block>) -> Result<(), ConsensusError> {
+    fn validate_block_inner(&self, block: &SealedBlock<OpBlock>) -> Result<(), ConsensusError> {
         if let Err(e) = self.consensus.validate_header(block.sealed_header()) {
             error!(target: "engine::tree::payload_validator", ?block, "Failed to validate header {}: {e}", block.hash());
             return Err(e);
@@ -631,10 +680,10 @@ where
         state_provider: S,
         env: ExecutionEnv<Evm>,
         input: &BlockOrPayload<T>,
-        handle: &mut PayloadHandle<impl ExecutableTxFor<Evm>, Err, N::Receipt>,
+        handle: &mut PayloadHandle<impl ExecutableTxFor<Evm>, Err, OpReceipt>,
     ) -> Result<
         (
-            BlockExecutionOutput<N::Receipt>,
+            BlockExecutionOutput<OpReceipt>,
             Vec<Address>,
             tokio::sync::oneshot::Receiver<(B256, alloy_primitives::Bloom)>,
         ),
@@ -643,9 +692,12 @@ where
     where
         S: StateProvider + Send,
         Err: core::error::Error + Send + Sync + 'static,
-        V: PayloadValidator<T, Block = N::Block>,
-        T: PayloadTypes<BuiltPayload: BuiltPayload<Primitives = N>, ExecutionData = OpExecutionData>,
-        Evm: ConfigureEngineEvm<T::ExecutionData, Primitives = N>,
+        V: PayloadValidator<T, Block = OpBlock>,
+        T: PayloadTypes<
+                BuiltPayload: BuiltPayload<Primitives = OpPrimitives>,
+                ExecutionData = OpExecutionData,
+            >,
+        Evm: ConfigureEngineEvm<T::ExecutionData, Primitives = OpPrimitives>,
     {
         debug!(target: "engine::tree::payload_validator", "Executing block");
 
@@ -656,10 +708,21 @@ where
             .build();
 
         let spec_id = *env.evm_env.spec_id();
-        let evm = self.evm_config.evm_with_env(&mut db, env.evm_env);
-        let ctx =
-            self.execution_ctx_for(input).map_err(|e| InsertBlockErrorKind::Other(Box::new(e)))?;
-        let mut executor = self.evm_config.create_executor(evm, ctx);
+        let evm: alloy_op_evm::OpEvm<
+            &mut State<StateProviderDatabase<S>>,
+            revm::inspector::NoOpInspector,
+            reth_evm::precompiles::PrecompilesMap,
+        > = self.evm_config.evm_with_env(&mut db, env.evm_env);
+        let ctx = self
+            .execution_ctx_for(input)
+            .map_err(|e: <Evm as ConfigureEvm>::Error| InsertBlockErrorKind::Other(Box::new(e)))?;
+
+        let mut executor = OpBlockExecutor::new(
+            evm,
+            ctx,
+            self.provider.chain_spec().clone(),
+            *self.evm_config.block_executor_factory().receipt_builder(),
+        );
 
         if !self.config.precompile_cache_disabled() {
             // Only cache pure precompiles to avoid issues with stateful precompiles
@@ -684,15 +747,14 @@ where
                 .transactions()
                 .into_iter()
                 .cloned()
-                .map(|tx| <N::SignedTx>::decode_2718(&mut &tx[..]).map(|tx| tx.tx_hash().clone()))
+                .map(|tx| {
+                    OpTransactionSigned::decode_2718(&mut &tx[..]).map(|tx| tx.tx_hash().clone())
+                })
                 .collect::<Result<Vec<_>, _>>()
-                 .map_err(|err| InsertBlockErrorKind::Other(Box::new(err)))?,
-            BlockOrPayload::Block(block) => block
-                .body()
-                .transactions()
-                .iter()
-                .map(|tx| tx.tx_hash().clone())
-                .collect::<Vec<_>>(),
+                .map_err(|err| InsertBlockErrorKind::Other(Box::new(err)))?,
+            BlockOrPayload::Block(block) => {
+                block.body().transactions().map(|tx| tx.tx_hash().clone()).collect::<Vec<_>>()
+            }
         };
         let executor = CachedExecutor::new(
             executor,
@@ -739,7 +801,15 @@ where
         debug_span!(target: "engine::tree", "merge transitions")
             .in_scope(|| db.merge_transitions(BundleRetention::Reverts));
 
-        let output = BlockExecutionOutput { result, state: db.take_bundle() };
+        let output = BlockExecutionOutput {
+            result: BlockExecutionResult {
+                receipts: result.receipts.into_iter().map(|receipt| receipt.into()).collect(),
+                requests: result.requests,
+                gas_used: result.gas_used,
+                blob_gas_used: result.blob_gas_used,
+            },
+            state: db.take_bundle(),
+        };
 
         let execution_duration = execution_start.elapsed();
         self.metrics.record_block_execution(&output, execution_duration);
@@ -762,10 +832,10 @@ where
         mut executor: E,
         transaction_count: usize,
         transactions: impl Iterator<Item = Result<Tx, Err>>,
-        receipt_tx: &crossbeam_channel::Sender<IndexedReceipt<N::Receipt>>,
+        receipt_tx: &crossbeam_channel::Sender<IndexedReceipt<OpReceipt>>,
     ) -> Result<(E, Vec<Address>), BlockExecutionError>
     where
-        E: BlockExecutor<Receipt = N::Receipt>,
+        E: BlockExecutor<Receipt = OpReceipt>,
         Tx: alloy_evm::block::ExecutableTx<E> + alloy_evm::RecoveredTx<InnerTx>,
         InnerTx: TxHashRef,
         Err: core::error::Error + Send + Sync + 'static,
@@ -879,16 +949,18 @@ where
     /// If `receipt_root_bloom` is provided, it will be used instead of computing the receipt root
     /// and logs bloom from the receipts.
     #[instrument(level = "debug", target = "engine::tree::payload_validator", skip_all)]
-    fn validate_post_execution<T: PayloadTypes<BuiltPayload: BuiltPayload<Primitives = N>>>(
+    fn validate_post_execution<
+        T: PayloadTypes<BuiltPayload: BuiltPayload<Primitives = OpPrimitives>>,
+    >(
         &self,
-        block: &RecoveredBlock<N::Block>,
-        parent_block: &SealedHeader<N::BlockHeader>,
-        output: &BlockExecutionOutput<N::Receipt>,
-        ctx: &mut TreeCtx<'_, N>,
+        block: &RecoveredBlock<OpBlock>,
+        parent_block: &SealedHeader<Header>,
+        output: &BlockExecutionOutput<OpReceipt>,
+        ctx: &mut TreeCtx<'_, OpPrimitives>,
         receipt_root_bloom: Option<ReceiptRootBloom>,
     ) -> Result<HashedPostState, InsertBlockErrorKind>
     where
-        V: PayloadValidator<T, Block = N::Block>,
+        V: PayloadValidator<T, Block = OpBlock>,
     {
         let start = Instant::now();
 
@@ -970,15 +1042,15 @@ where
         &mut self,
         env: ExecutionEnv<Evm>,
         txs: T,
-        provider_builder: StateProviderBuilder<N, P>,
+        provider_builder: StateProviderBuilder<OpPrimitives, P>,
         overlay_factory: OverlayStateProviderFactory<P>,
         strategy: StateRootStrategy,
         block_access_list: Option<Arc<BlockAccessList>>,
     ) -> Result<
         PayloadHandle<
-            impl ExecutableTxFor<Evm> + use<N, P, Evm, V, T, C>,
-            impl core::error::Error + Send + Sync + 'static + use<N, P, Evm, V, T, C>,
-            N::Receipt,
+            impl ExecutableTxFor<Evm> + use<P, Evm, V, T, C>,
+            impl core::error::Error + Send + Sync + 'static + use<P, Evm, V, T, C>,
+            OpReceipt,
         >,
         InsertBlockErrorKind,
     > {
@@ -1031,8 +1103,8 @@ where
     fn state_provider_builder(
         &self,
         hash: B256,
-        state: &EngineApiTreeState<N>,
-    ) -> ProviderResult<Option<StateProviderBuilder<N, P>>> {
+        state: &EngineApiTreeState<OpPrimitives>,
+    ) -> ProviderResult<Option<StateProviderBuilder<OpPrimitives, P>>> {
         if let Some((historical, blocks)) = state.tree_state.blocks_by_hash(hash) {
             debug!(target: "engine::tree::payload_validator", %hash, %historical, "found canonical state for block in memory, creating provider builder");
             // the block leads back to the canonical chain
@@ -1072,11 +1144,11 @@ where
     /// Called when an invalid block is encountered during validation.
     fn on_invalid_block(
         &self,
-        parent_header: &SealedHeader<N::BlockHeader>,
-        block: &RecoveredBlock<N::Block>,
-        output: &BlockExecutionOutput<N::Receipt>,
+        parent_header: &SealedHeader<Header>,
+        block: &RecoveredBlock<OpBlock>,
+        output: &BlockExecutionOutput<OpReceipt>,
         trie_updates: Option<(&TrieUpdates, B256)>,
-        state: &mut EngineApiTreeState<N>,
+        state: &mut EngineApiTreeState<OpPrimitives>,
     ) {
         if state.invalid_headers.get(&block.hash()).is_some() {
             // we already marked this block as invalid
@@ -1094,7 +1166,7 @@ where
     /// If parent is on disk (no in-memory blocks), returns `None` for the lazy overlay.
     fn get_parent_lazy_overlay(
         parent_hash: B256,
-        state: &EngineApiTreeState<N>,
+        state: &EngineApiTreeState<OpPrimitives>,
     ) -> (Option<LazyOverlay>, B256) {
         let (anchor_hash, blocks) =
             state.tree_state.blocks_by_hash(parent_hash).unwrap_or_else(|| (parent_hash, vec![]));
@@ -1135,13 +1207,13 @@ where
     /// from the completed task or via fallback computation.
     fn spawn_deferred_trie_task(
         &self,
-        block: RecoveredBlock<N::Block>,
-        execution_outcome: Arc<BlockExecutionOutput<N::Receipt>>,
-        ctx: &TreeCtx<'_, N>,
+        block: RecoveredBlock<OpBlock>,
+        execution_outcome: Arc<BlockExecutionOutput<OpReceipt>>,
+        ctx: &TreeCtx<'_, OpPrimitives>,
         hashed_state: HashedPostState,
         trie_output: TrieUpdates,
         overlay_factory: OverlayStateProviderFactory<P>,
-    ) -> ExecutedBlock<N> {
+    ) -> ExecutedBlock<OpPrimitives> {
         // Capture parent hash and ancestor overlays for deferred trie input construction.
         let (anchor_hash, overlay_blocks) = ctx
             .state()
@@ -1256,7 +1328,7 @@ where
     }
 }
 
-impl<N, Types, P, Evm, V, C> EngineValidator<Types> for BaseEngineValidator<P, Evm, V, C>
+impl<Types, P, Evm, V, C> EngineValidator<Types> for BaseEngineValidator<P, Evm, V, C>
 where
     P: DatabaseProviderFactory<
             Provider: BlockReader
@@ -1265,24 +1337,31 @@ where
                           + StorageChangeSetReader
                           + ChangeSetReader
                           + BlockNumReader,
-        > + BlockReader<Header = N::BlockHeader>
+        > + BlockReader<Header = Header>
         + StateProviderFactory
         + StateReader
         + ChangeSetReader
         + BlockNumReader
         + HashedPostStateProvider
+        + ChainSpecProvider<ChainSpec = OpChainSpec>
         + Clone
         + 'static,
-    N: NodePrimitives,
-    V: PayloadValidator<Types, Block = N::Block>,
-    Evm: ConfigureEngineEvm<OpExecutionData, Primitives = N> + 'static,
-    Types: PayloadTypes<BuiltPayload: BuiltPayload<Primitives = N>, ExecutionData = OpExecutionData>,
-    C: CachedExecutionProvider<N::Receipt, <<Evm::BlockExecutorFactory as BlockExecutorFactory>::EvmFactory as EvmFactory>::HaltReason> + Clone + Send + Sync + 'static,
+    V: PayloadValidator<Types, Block = OpBlock>,
+    Evm: ConfigureEngineEvm<
+            OpExecutionData,
+            Primitives = OpPrimitives,
+            BlockExecutorFactory = OpBlockExecutorFactory<OpRethReceiptBuilder, Arc<OpChainSpec>>,
+        > + 'static,
+    Types: PayloadTypes<
+            BuiltPayload: BuiltPayload<Primitives = OpPrimitives>,
+            ExecutionData = OpExecutionData,
+        >,
+    C: CachedExecutionProvider<OpTxResult<OpHaltReason, OpTxType>> + Clone + Send + Sync + 'static,
 {
     fn validate_payload_attributes_against_header(
         &self,
         attr: &Types::PayloadAttributes,
-        header: &N::BlockHeader,
+        header: &Header,
     ) -> Result<(), InvalidPayloadAttributesError> {
         self.validator.validate_payload_attributes_against_header(attr, header)
     }
@@ -1290,7 +1369,7 @@ where
     fn convert_payload_to_block(
         &self,
         payload: Types::ExecutionData,
-    ) -> Result<SealedBlock<N::Block>, NewPayloadError> {
+    ) -> Result<SealedBlock<OpBlock>, NewPayloadError> {
         let block = self.validator.convert_payload_to_block(payload)?;
         Ok(block)
     }
@@ -1298,20 +1377,20 @@ where
     fn validate_payload(
         &mut self,
         payload: Types::ExecutionData,
-        ctx: TreeCtx<'_, N>,
-    ) -> ValidationOutcome<N> {
+        ctx: TreeCtx<'_, OpPrimitives>,
+    ) -> ValidationOutcome<OpPrimitives> {
         self.validate_block_with_state(BlockOrPayload::Payload(payload), ctx)
     }
 
     fn validate_block(
         &mut self,
-        block: SealedBlock<N::Block>,
-        ctx: TreeCtx<'_, N>,
-    ) -> ValidationOutcome<N> {
+        block: SealedBlock<OpBlock>,
+        ctx: TreeCtx<'_, OpPrimitives>,
+    ) -> ValidationOutcome<OpPrimitives> {
         self.validate_block_with_state(BlockOrPayload::Block(block), ctx)
     }
 
-    fn on_inserted_executed_block(&self, block: ExecutedBlock<N>) {
+    fn on_inserted_executed_block(&self, block: ExecutedBlock<OpPrimitives>) {
         self.payload_processor.on_inserted_executed_block(
             block.recovered_block.block_with_parent(),
             &block.execution_output.state,

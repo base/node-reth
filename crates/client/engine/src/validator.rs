@@ -2,14 +2,15 @@
 
 use std::{fmt::Debug, sync::Arc};
 
-use alloy_evm::EvmFactory;
+use alloy_op_evm::{OpBlockExecutorFactory, block::OpTxResult};
 use base_engine_tree::{base::BaseEngineValidator, cached_execution::CachedExecutionProvider};
 use base_flashblocks::{FlashblocksAPI, FlashblocksState};
+use op_alloy_consensus::OpTxType;
 use op_alloy_rpc_types_engine::OpExecutionData;
 use op_revm::OpHaltReason;
 use reth_chainspec::EthChainSpec;
 use reth_engine_primitives::ConfigureEngineEvm;
-use reth_evm::{ConfigureEvm, block::BlockExecutorFactory};
+use reth_evm::{ConfigureEvm, eth::EthTxResult};
 use reth_node_api::{
     AddOnsContext, BlockTy, FullNodeComponents, FullNodeTypes, NodeTypes, PayloadTypes, TreeConfig,
 };
@@ -17,10 +18,14 @@ use reth_node_builder::{
     invalid_block_hook::InvalidBlockHookExt,
     rpc::{ChangesetCache, EngineValidatorBuilder, PayloadValidatorBuilder},
 };
+use reth_optimism_chainspec::OpChainSpec;
+use reth_optimism_node::{OpEngineTypes, OpRethReceiptBuilder};
+use reth_optimism_primitives::OpPrimitives;
 use reth_provider::BlockNumReader;
-use revm::context::result::ResultAndState;
+use revm::context::result::ExecResultAndState;
 use revm_primitives::B256;
 
+/// Provider that fetches cached execution results for transactions.
 #[derive(Debug, Clone)]
 pub struct FlashblocksCachedExecutionProvider<P> {
     flashblocks_state: Option<Arc<FlashblocksState>>,
@@ -29,12 +34,13 @@ pub struct FlashblocksCachedExecutionProvider<P> {
 }
 
 impl<P> FlashblocksCachedExecutionProvider<P> {
+    /// Creates a new [`FlashblocksCachedExecutionProvider`].
     pub fn new(provider: P, flashblocks_state: Option<Arc<FlashblocksState>>) -> Self {
         Self { provider, flashblocks_state }
     }
 }
 
-impl<P, Receipt> CachedExecutionProvider<Receipt, OpHaltReason>
+impl<P> CachedExecutionProvider<OpTxResult<OpHaltReason, OpTxType>>
     for FlashblocksCachedExecutionProvider<P>
 where
     P: BlockNumReader,
@@ -44,7 +50,7 @@ where
         parent_block_hash: &B256,
         prev_cached_hash: Option<&B256>,
         tx_hash: &B256,
-    ) -> Option<ResultAndState<OpHaltReason>> {
+    ) -> Option<OpTxResult<OpHaltReason, OpTxType>> {
         let Some(flashblocks_state) = self.flashblocks_state.as_ref() else {
             return None;
         };
@@ -83,12 +89,23 @@ where
 
         let receipt_and_state = pending_blocks
             .get_transaction_result(*tx_hash)
-            .zip(pending_blocks.get_transaction_state(tx_hash));
+            .zip(pending_blocks.get_transaction_state(tx_hash))
+            .zip(pending_blocks.get_transaction_by_hash(*tx_hash))
+            .zip(pending_blocks.get_transaction_sender(tx_hash));
 
         // info!("Using cached results - receipt and state found for tx: {:?}", tx_hash);
-        let (result, state) = receipt_and_state?;
+        let (((result, state), tx), sender) = receipt_and_state?;
 
-        Some(ResultAndState::new(result, state))
+        let eth_tx_result = EthTxResult {
+            result: ExecResultAndState::new(result, state),
+            blob_gas_used: 0,
+            tx_type: tx.inner.inner.tx_type(),
+        };
+
+        let op_tx_result =
+            OpTxResult { inner: eth_tx_result, is_deposit: tx.inner.inner.is_deposit(), sender };
+
+        Some(op_tx_result)
     }
 }
 /// Basic implementation of [`EngineValidatorBuilder`].
@@ -128,13 +145,19 @@ where
 impl<Node, EV> EngineValidatorBuilder<Node> for BaseEngineValidatorBuilder<EV>
 where
     Node: FullNodeComponents<
-        Evm: ConfigureEngineEvm<OpExecutionData>
-                 + ConfigureEvm<
-            BlockExecutorFactory: BlockExecutorFactory<
-                EvmFactory: EvmFactory<HaltReason = OpHaltReason>,
+            Types: NodeTypes<
+                Payload = OpEngineTypes,
+                ChainSpec = OpChainSpec,
+                Primitives = OpPrimitives,
+            >,
+            Evm: ConfigureEngineEvm<OpExecutionData>
+                     + ConfigureEvm<
+                BlockExecutorFactory = OpBlockExecutorFactory<
+                    OpRethReceiptBuilder,
+                    Arc<OpChainSpec>,
+                >,
             >,
         >,
-    >,
     <<Node as FullNodeTypes>::Types as NodeTypes>::Payload:
         PayloadTypes<ExecutionData = OpExecutionData>,
     EV: PayloadValidatorBuilder<Node>,

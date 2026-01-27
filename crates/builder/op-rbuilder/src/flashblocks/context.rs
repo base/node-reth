@@ -7,7 +7,7 @@ use alloy_evm::Database;
 use alloy_op_evm::block::receipt_builder::OpReceiptBuilder;
 use alloy_primitives::{BlockHash, Bytes, U256};
 use alloy_rpc_types_eth::Withdrawals;
-use op_alloy_consensus::OpDepositReceipt;
+use op_alloy_consensus::{OpDepositReceipt, OpTxType};
 use op_revm::OpSpecId;
 use reth_basic_payload_builder::PayloadConfig;
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
@@ -274,7 +274,7 @@ impl OpPayloadBuilderCtx {
     /// Constructs a receipt for the given transaction.
     pub fn build_receipt<E: Evm>(
         &self,
-        ctx: ReceiptBuilderCtx<'_, OpTransactionSigned, E>,
+        ctx: ReceiptBuilderCtx<'_, OpTxType, E>,
         deposit_nonce: Option<u64>,
     ) -> OpReceipt {
         let receipt_builder = self.evm_config.block_executor_factory().receipt_builder();
@@ -369,7 +369,7 @@ impl OpPayloadBuilderCtx {
             }
 
             let ctx = ReceiptBuilderCtx {
-                tx: sequencer_tx.inner(),
+                tx_type: sequencer_tx.inner().tx_type(),
                 evm: &evm,
                 result,
                 state: &state,
@@ -538,7 +538,7 @@ impl OpPayloadBuilderCtx {
 
             // Push transaction changeset and calculate header bloom filter for receipt.
             let ctx = ReceiptBuilderCtx {
-                tx: tx.inner(),
+                tx_type: tx.inner().tx_type(),
                 evm: &evm,
                 result,
                 state: &state,
@@ -662,7 +662,7 @@ impl OpPayloadBuilderCtx {
                         info.cumulative_da_bytes_used += backrun_tx.estimated_da_size();
 
                         let ctx = ReceiptBuilderCtx {
-                            tx: consensus_tx.inner(),
+                            tx_type: consensus_tx.inner().tx_type(),
                             evm: &evm,
                             result,
                             state: &state,
