@@ -151,7 +151,7 @@ pub struct OpRBuilderMetrics {
     pub block_predicted_state_root_time_us: Histogram,
 
     // === State Root Time / Gas Ratio (Anomaly Detection) ===
-    /// Ratio of state_root_time_us / gas_used for each transaction.
+    /// Ratio of `state_root_time_us` / `gas_used` for each transaction.
     /// High values on low-gas txs may indicate prediction anomalies worth investigating.
     pub state_root_time_per_gas_ratio: Histogram,
 }

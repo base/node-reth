@@ -59,7 +59,7 @@ pub struct TxResources {
 
 /// Resource metering limits that are optionally enforced for performance/business goals.
 /// These are out-of-protocol limits that can operate in dry-run or enforcement mode.
-#[derive(Debug, Display)]
+#[derive(Debug, Display, Clone)]
 pub enum ResourceMeteringLimitExceeded {
     #[display("TransactionExecutionTimeExceeded: tx_time_us={_0} limit_us={_1}")]
     TransactionExecutionTime(u128, u128),
@@ -73,7 +73,7 @@ pub enum ResourceMeteringLimitExceeded {
     BlockStateRootTime(u128, u128, u128),
 }
 
-#[derive(Debug, Display)]
+#[derive(Debug, Display, Clone)]
 pub enum TxnExecutionResult {
     // Protocol-enforced limits (always rejected)
     TransactionDALimitExceeded,
@@ -273,7 +273,7 @@ mod tests {
 
     #[test]
     fn test_tx_within_all_limits() {
-        let info: ExecutionInfo<()> = ExecutionInfo::with_capacity(10);
+        let info: ExecutionInfo = ExecutionInfo::with_capacity(10);
         let limits = default_limits();
         let tx = default_tx();
 
@@ -282,7 +282,7 @@ mod tests {
 
     #[test]
     fn test_gas_limit_exceeded() {
-        let mut info: ExecutionInfo<()> = ExecutionInfo::with_capacity(10);
+        let mut info: ExecutionInfo = ExecutionInfo::with_capacity(10);
         info.cumulative_gas_used = 29_990_000;
 
         let limits = default_limits();
@@ -294,7 +294,7 @@ mod tests {
 
     #[test]
     fn test_gas_limit_exactly_at_limit() {
-        let mut info: ExecutionInfo<()> = ExecutionInfo::with_capacity(10);
+        let mut info: ExecutionInfo = ExecutionInfo::with_capacity(10);
         info.cumulative_gas_used = 29_979_000;
 
         let limits = default_limits();
@@ -308,7 +308,7 @@ mod tests {
 
     #[test]
     fn test_tx_da_limit_exceeded() {
-        let info: ExecutionInfo<()> = ExecutionInfo::with_capacity(10);
+        let info: ExecutionInfo = ExecutionInfo::with_capacity(10);
         let limits = ResourceLimits { tx_data_limit: Some(1000), ..default_limits() };
         let tx = TxResources { da_size: 1001, gas_limit: 21_000, ..Default::default() };
 
@@ -318,7 +318,7 @@ mod tests {
 
     #[test]
     fn test_block_da_limit_exceeded() {
-        let mut info: ExecutionInfo<()> = ExecutionInfo::with_capacity(10);
+        let mut info: ExecutionInfo = ExecutionInfo::with_capacity(10);
         info.cumulative_da_bytes_used = 9500;
 
         let limits = ResourceLimits { block_data_limit: Some(10_000), ..default_limits() };
@@ -330,7 +330,7 @@ mod tests {
 
     #[test]
     fn test_da_footprint_limit_exceeded() {
-        let mut info: ExecutionInfo<()> = ExecutionInfo::with_capacity(10);
+        let mut info: ExecutionInfo = ExecutionInfo::with_capacity(10);
         info.cumulative_da_bytes_used = 1_000_000;
 
         let limits = ResourceLimits {
@@ -349,7 +349,7 @@ mod tests {
 
     #[test]
     fn test_tx_execution_time_exceeded() {
-        let info: ExecutionInfo<()> = ExecutionInfo::with_capacity(10);
+        let info: ExecutionInfo = ExecutionInfo::with_capacity(10);
         let limits =
             ResourceLimits { tx_execution_time_limit_us: Some(1_000_000), ..default_limits() };
         let tx = TxResources {
@@ -369,7 +369,7 @@ mod tests {
 
     #[test]
     fn test_flashblock_execution_time_exceeded() {
-        let mut info: ExecutionInfo<()> = ExecutionInfo::with_capacity(10);
+        let mut info: ExecutionInfo = ExecutionInfo::with_capacity(10);
         info.flashblock_execution_time_us = 4_000_000; // 4s already used
 
         let limits = ResourceLimits {
@@ -395,7 +395,7 @@ mod tests {
 
     #[test]
     fn test_execution_time_within_limits() {
-        let mut info: ExecutionInfo<()> = ExecutionInfo::with_capacity(10);
+        let mut info: ExecutionInfo = ExecutionInfo::with_capacity(10);
         info.flashblock_execution_time_us = 2_000_000;
 
         let limits = ResourceLimits {
@@ -414,7 +414,7 @@ mod tests {
 
     #[test]
     fn test_execution_time_no_metering_data_skips_check() {
-        let info: ExecutionInfo<()> = ExecutionInfo::with_capacity(10);
+        let info: ExecutionInfo = ExecutionInfo::with_capacity(10);
         let limits = ResourceLimits {
             tx_execution_time_limit_us: Some(1_000),
             flashblock_execution_time_limit_us: Some(1_000),
@@ -430,7 +430,7 @@ mod tests {
 
     #[test]
     fn test_tx_state_root_time_exceeded() {
-        let info: ExecutionInfo<()> = ExecutionInfo::with_capacity(10);
+        let info: ExecutionInfo = ExecutionInfo::with_capacity(10);
         let limits =
             ResourceLimits { tx_state_root_time_limit_us: Some(500_000), ..default_limits() };
         let tx = TxResources {
@@ -450,7 +450,7 @@ mod tests {
 
     #[test]
     fn test_block_state_root_time_exceeded() {
-        let mut info: ExecutionInfo<()> = ExecutionInfo::with_capacity(10);
+        let mut info: ExecutionInfo = ExecutionInfo::with_capacity(10);
         info.cumulative_state_root_time_us = 8_000_000; // 8s already used
 
         let limits = ResourceLimits {
@@ -474,7 +474,7 @@ mod tests {
 
     #[test]
     fn test_state_root_time_within_limits() {
-        let mut info: ExecutionInfo<()> = ExecutionInfo::with_capacity(10);
+        let mut info: ExecutionInfo = ExecutionInfo::with_capacity(10);
         info.cumulative_state_root_time_us = 5_000_000;
 
         let limits = ResourceLimits {
@@ -493,7 +493,7 @@ mod tests {
 
     #[test]
     fn test_state_root_time_no_metering_data_skips_check() {
-        let info: ExecutionInfo<()> = ExecutionInfo::with_capacity(10);
+        let info: ExecutionInfo = ExecutionInfo::with_capacity(10);
         let limits = ResourceLimits {
             tx_state_root_time_limit_us: Some(1),
             block_state_root_time_limit_us: Some(1),
@@ -508,7 +508,7 @@ mod tests {
 
     #[test]
     fn test_reset_flashblock_execution_time() {
-        let mut info: ExecutionInfo<()> = ExecutionInfo::with_capacity(10);
+        let mut info: ExecutionInfo = ExecutionInfo::with_capacity(10);
         info.flashblock_execution_time_us = 5_000_000;
         info.cumulative_state_root_time_us = 3_000_000;
         info.cumulative_gas_used = 1_000_000;
@@ -526,7 +526,7 @@ mod tests {
 
     #[test]
     fn test_execution_time_resets_between_flashblocks() {
-        let mut info: ExecutionInfo<()> = ExecutionInfo::with_capacity(10);
+        let mut info: ExecutionInfo = ExecutionInfo::with_capacity(10);
         let limits = ResourceLimits {
             flashblock_execution_time_limit_us: Some(5_000_000),
             ..default_limits()
@@ -552,7 +552,7 @@ mod tests {
 
     #[test]
     fn test_state_root_time_cumulative_across_flashblocks() {
-        let mut info: ExecutionInfo<()> = ExecutionInfo::with_capacity(10);
+        let mut info: ExecutionInfo = ExecutionInfo::with_capacity(10);
         let limits =
             ResourceLimits { block_state_root_time_limit_us: Some(10_000_000), ..default_limits() };
 
@@ -585,7 +585,7 @@ mod tests {
 
     #[test]
     fn test_multiple_limits_first_exceeded_wins() {
-        let info: ExecutionInfo<()> = ExecutionInfo::with_capacity(10);
+        let info: ExecutionInfo = ExecutionInfo::with_capacity(10);
         let limits = ResourceLimits {
             tx_data_limit: Some(100),
             tx_execution_time_limit_us: Some(1_000_000),
@@ -608,7 +608,7 @@ mod tests {
 
     #[test]
     fn test_all_limits_configured_tx_passes() {
-        let info: ExecutionInfo<()> = ExecutionInfo::with_capacity(10);
+        let info: ExecutionInfo = ExecutionInfo::with_capacity(10);
         let limits = ResourceLimits {
             block_gas_limit: 30_000_000,
             tx_data_limit: Some(10_000),
@@ -634,7 +634,7 @@ mod tests {
 
     #[test]
     fn test_zero_limits() {
-        let info: ExecutionInfo<()> = ExecutionInfo::with_capacity(10);
+        let info: ExecutionInfo = ExecutionInfo::with_capacity(10);
         let limits = ResourceLimits {
             block_gas_limit: 0,
             tx_execution_time_limit_us: Some(0),
@@ -649,7 +649,7 @@ mod tests {
 
     #[test]
     fn test_saturating_add_prevents_overflow() {
-        let mut info: ExecutionInfo<()> = ExecutionInfo::with_capacity(10);
+        let mut info: ExecutionInfo = ExecutionInfo::with_capacity(10);
         info.flashblock_execution_time_us = u128::MAX - 100;
 
         let limits = ResourceLimits {
@@ -670,7 +670,7 @@ mod tests {
 
     #[test]
     fn test_with_capacity_initializes_correctly() {
-        let info: ExecutionInfo<()> = ExecutionInfo::with_capacity(100);
+        let info: ExecutionInfo = ExecutionInfo::with_capacity(100);
 
         assert_eq!(info.cumulative_gas_used, 0);
         assert_eq!(info.cumulative_da_bytes_used, 0);
