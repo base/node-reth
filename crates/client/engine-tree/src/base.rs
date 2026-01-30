@@ -644,7 +644,7 @@ where
         state: &EngineApiTreeState<OpPrimitives>,
     ) -> ProviderResult<Option<SealedHeader<Header>>> {
         // check memory first
-        let header = state.tree_state.sealed_header_by_hash(&hash);
+        let header = state.tree_state().sealed_header_by_hash(&hash);
 
         if header.is_some() { Ok(header) } else { self.provider.sealed_header_by_hash(hash) }
     }
@@ -1105,7 +1105,7 @@ where
         hash: B256,
         state: &EngineApiTreeState<OpPrimitives>,
     ) -> ProviderResult<Option<StateProviderBuilder<OpPrimitives, P>>> {
-        if let Some((historical, blocks)) = state.tree_state.blocks_by_hash(hash) {
+        if let Some((historical, blocks)) = state.tree_state().blocks_by_hash(hash) {
             debug!(target: "engine::tree::payload_validator", %hash, %historical, "found canonical state for block in memory, creating provider builder");
             // the block leads back to the canonical chain
             return Ok(Some(StateProviderBuilder::new(
@@ -1150,7 +1150,7 @@ where
         trie_updates: Option<(&TrieUpdates, B256)>,
         state: &mut EngineApiTreeState<OpPrimitives>,
     ) {
-        if state.invalid_headers.get(&block.hash()).is_some() {
+        if state.has_invalid_header(&block.hash()) {
             // we already marked this block as invalid
             return;
         }
@@ -1169,7 +1169,7 @@ where
         state: &EngineApiTreeState<OpPrimitives>,
     ) -> (Option<LazyOverlay>, B256) {
         let (anchor_hash, blocks) =
-            state.tree_state.blocks_by_hash(parent_hash).unwrap_or_else(|| (parent_hash, vec![]));
+            state.tree_state().blocks_by_hash(parent_hash).unwrap_or_else(|| (parent_hash, vec![]));
 
         if blocks.is_empty() {
             debug!(target: "engine::tree::payload_validator", "Parent found on disk, no lazy overlay needed");
@@ -1217,7 +1217,7 @@ where
         // Capture parent hash and ancestor overlays for deferred trie input construction.
         let (anchor_hash, overlay_blocks) = ctx
             .state()
-            .tree_state
+            .tree_state()
             .blocks_by_hash(block.parent_hash())
             .unwrap_or_else(|| (block.parent_hash(), Vec::new()));
 
