@@ -46,10 +46,15 @@ zepter-fix:
     @command -v zepter >/dev/null 2>&1 || cargo install zepter
     zepter format features --fix
 
-# Runs tests across workspace with all features enabled
+# Runs tests across workspace with all features enabled (excludes system_tests)
 test: build-contracts
     @command -v cargo-nextest >/dev/null 2>&1 || cargo install cargo-nextest
-    RUSTFLAGS="-D warnings" cargo nextest run --workspace --all-features
+    RUSTFLAGS="-D warnings" cargo nextest run --workspace --all-features --exclude system_tests
+
+# Runs system tests (requires Docker)
+system-tests: build-contracts
+    @command -v cargo-nextest >/dev/null 2>&1 || cargo install cargo-nextest
+    cargo nextest run -p system_tests
 
 # Runs cargo hack against the workspace
 hack:
@@ -156,4 +161,4 @@ devnet-flashblocks:
 
 # Stream logs from devnet containers (optionally specify container names)
 devnet-logs *containers:
-    docker compose --env-file .env.devnet -f docker/docker-compose.yml logs -f {{containers}}
+    docker compose --env-file .env.devnet -f docker/docker-compose.yml logs -f {{ containers }}
