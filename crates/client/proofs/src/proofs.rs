@@ -1,6 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
-use base_client_node::{BaseBuilder, BaseNodeExtension, FromExtensionConfig};
+use base_node::{BaseBuilder, BaseNodeExtension, FromExtensionConfig};
 use reth_db::database_metrics::DatabaseMetrics;
 use reth_node_api::FullNodeComponents;
 use reth_optimism_exex::OpProofsExEx;

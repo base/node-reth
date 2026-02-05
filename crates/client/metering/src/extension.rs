@@ -3,8 +3,8 @@
 
 use std::sync::Arc;
 
-use base_client_node::{BaseBuilder, BaseNodeExtension, FromExtensionConfig};
 use base_flashblocks::{FlashblocksConfig, FlashblocksState};
+use base_node::{BaseBuilder, BaseNodeExtension, FromExtensionConfig};
 use tracing::info;
 
 use crate::{MeteringApiImpl, MeteringApiServer};

@@ -251,7 +251,7 @@ mod tests {
     use alloy_eips::Encodable2718;
     use alloy_primitives::{Address, Bytes, keccak256, utils::Unit};
     use base_bundles::{Bundle, ParsedBundle};
-    use base_client_node::test_utils::{Account, TestHarness};
+    use base_node::test_utils::{Account, TestHarness};
     use eyre::Context;
     use reth_optimism_primitives::OpTransactionSigned;
     use reth_provider::StateProviderFactory;

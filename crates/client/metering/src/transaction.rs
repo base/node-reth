@@ -98,7 +98,7 @@ mod tests {
         SignableTransaction, Transaction, TxEip1559, TxEip7702, transaction::SignerRecoverable,
     };
     use alloy_primitives::{Address, bytes, keccak256};
-    use base_client_node::test_utils::Account as BaseAccount;
+    use base_node::test_utils::Account as BaseAccount;
     use op_alloy_consensus::OpTxEnvelope;
     use op_alloy_network::TxSignerSync;
     use revm_context_interface::transaction::{AccessList, AccessListItem};

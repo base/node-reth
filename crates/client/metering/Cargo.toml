@@ -14,7 +14,7 @@ workspace = true
 [dependencies]
 # workspace
 base-bundles.workspace = true
-base-client-node.workspace = true
+base-node.workspace = true
 base-flashblocks.workspace = true
 
 # reth
@@ -52,7 +52,7 @@ serde.workspace = true
 derive_more.workspace = true
 
 [dev-dependencies]
-base-client-node = { workspace = true, features = ["test-utils"] }
+base-node = { workspace = true, features = ["test-utils"] }
 base-flashblocks.workspace = true
 reth-db = { workspace = true, features = ["op", "test-utils"] }
 reth-db-common.workspace = true

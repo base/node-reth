@@ -10,7 +10,7 @@ repository.workspace = true
 
 [features]
 test-utils = [
-	"base-client-node/test-utils",
+	"base-node/test-utils",
 	"dep:alloy-consensus",
 	"dep:alloy-eips",
 	"dep:alloy-primitives",
@@ -39,7 +39,7 @@ workspace = true
 [dependencies]
 # workspace
 base-flashblocks.workspace = true
-base-client-node.workspace = true
+base-node.workspace = true
 base-client-engine.workspace = true
 
 # reth
@@ -68,7 +68,7 @@ reth-transaction-pool = { workspace = true, features = ["test-utils"], optional 
 
 
 [dev-dependencies]
-base-client-node = { workspace = true, features = ["test-utils"] }
+base-node = { workspace = true, features = ["test-utils"] }
 base-flashblocks-node = { path = ".", features = ["test-utils"] }
 rand.workspace = true
 eyre.workspace = true

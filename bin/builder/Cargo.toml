@@ -19,14 +19,33 @@ workspace = true
 [dependencies]
 # Workspace
 base-builder-cli.workspace = true
+base-builder-core.workspace = true
 base-cli-utils.workspace = true
 
 # CLI
 clap.workspace = true
 
 # reth
+reth-cli-commands.workspace = true
 reth-cli-util.workspace = true
+reth-db = { workspace = true, features = ["op"] }
+reth-node-builder.workspace = true
+reth-optimism-chainspec.workspace = true
+reth-optimism-cli = { workspace = true, features = ["otlp"] }
+reth-optimism-node.workspace = true
+reth-optimism-rpc = { workspace = true, features = ["client"] }
+reth-optimism-txpool.workspace = true
+
+# tracing
+tracing.workspace = true
+
+# misc
+eyre.workspace = true
 
 [features]
 default = [ "jemalloc" ]
-jemalloc = [ "base-builder-cli/jemalloc", "reth-cli-util/jemalloc" ]
+jemalloc = [
+	"base-builder-cli/jemalloc",
+	"reth-cli-util/jemalloc",
+	"reth-optimism-cli/jemalloc",
+]

@@ -19,7 +19,7 @@ workspace = true
 [dependencies]
 base-protocol = { workspace = true, features = ["serde"] }
 base-consensus-rpc = { workspace = true, features = ["client"] }
-base-client-node = { workspace = true, features = ["test-utils"] }
+base-node = { workspace = true, features = ["test-utils"] }
 base-flashblocks.workspace = true
 base-flashblocks-node.workspace = true
 base-flashtypes.workspace = true

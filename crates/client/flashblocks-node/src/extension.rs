@@ -4,11 +4,11 @@
 use std::sync::Arc;
 
 use base_client_engine::BaseEngineValidatorBuilder;
-use base_client_node::{BaseBuilder, BaseNodeExtension, FromExtensionConfig};
 use base_flashblocks::{
     EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer, FlashblocksConfig,
     FlashblocksSubscriber,
 };
+use base_node::{BaseBuilder, BaseNodeExtension, FromExtensionConfig};
 use reth_chain_state::CanonStateSubscriptions;
 use reth_optimism_node::OpEngineValidatorBuilder;
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};

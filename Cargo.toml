@@ -110,7 +110,7 @@ base-reth-rpc-types = { path = "crates/shared/reth-rpc-types" }
 # Client
 base-client-cli = { path = "crates/client/cli" }
 base-client-engine = { path = "crates/client/engine" }
-base-client-node = { path = "crates/client/node" }
+base-node = { path = "crates/shared/node" }
 base-flashblocks = { path = "crates/client/flashblocks" }
 base-metering = { path = "crates/client/metering" }
 base-txpool = { path = "crates/client/txpool" }

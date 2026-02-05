@@ -16,12 +16,12 @@ use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types_engine::PayloadId;
 use alloy_sol_types::{SolConstructor, SolValue};
-use base_client_node::test_utils::{
-    Account, L1_BLOCK_INFO_DEPOSIT_TX, MockERC20, TransparentUpgradeableProxy,
-};
 use base_flashblocks_node::test_harness::FlashblocksHarness;
 use base_flashtypes::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
+};
+use base_node::test_utils::{
+    Account, L1_BLOCK_INFO_DEPOSIT_TX, MockERC20, TransparentUpgradeableProxy,
 };
 use eyre::Result;
 struct Erc20TestSetup {

@@ -13,7 +13,7 @@ mod handle;
 pub use handle::BaseNodeHandle;
 
 mod runner;
-pub use runner::BaseNodeRunner;
+pub use runner::{BaseNodeConfig, BaseNodeRunner};
 
 mod types;
 pub use types::{BaseNodeBuilder, OpBuilder, OpProvider};
