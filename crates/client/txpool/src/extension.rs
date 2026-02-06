@@ -4,7 +4,10 @@
 use base_client_node::{BaseBuilder, BaseNodeExtension, FromExtensionConfig};
 use tracing::info;
 
-use crate::{TransactionStatusApiImpl, TransactionStatusApiServer, tracex_exex};
+use crate::{
+    TransactionStatusApiImpl, TransactionStatusApiServer, TxPoolManagementApiImpl,
+    TxPoolManagementApiServer, tracex_exex,
+};
 
 /// Transaction pool configuration.
 #[derive(Debug, Clone)]
@@ -51,6 +54,10 @@ impl BaseNodeExtension for TxPoolExtension {
             let proxy_api = TransactionStatusApiImpl::new(sequencer_rpc, ctx.pool().clone())
                 .expect("Failed to create transaction status proxy");
             ctx.modules.merge_configured(proxy_api.into_rpc())?;
+
+            info!(message = "Starting TxPool Management RPC");
+            let management_api = TxPoolManagementApiImpl::new(ctx.pool().clone());
+            ctx.modules.merge_configured(management_api.into_rpc())?;
             Ok(())
         })
     }

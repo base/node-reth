@@ -12,6 +12,7 @@ pub use exex::tracex_exex;
 mod rpc;
 pub use rpc::{
     Status, TransactionStatusApiImpl, TransactionStatusApiServer, TransactionStatusResponse,
+    TxPoolManagementApiImpl, TxPoolManagementApiServer,
 };
 
 mod tracker;
