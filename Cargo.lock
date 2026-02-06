@@ -2418,6 +2418,7 @@ dependencies = [
 name = "base-reth-node"
 version = "0.0.0"
 dependencies = [
+ "alloy-primitives",
  "base-cli-utils",
  "base-client-node",
  "base-flashblocks",
@@ -2426,9 +2427,14 @@ dependencies = [
  "base-proofs-extension",
  "base-txpool",
  "clap",
+ "eyre",
+ "jsonrpsee",
+ "jsonrpsee-types",
  "reth-cli-util",
  "reth-optimism-cli",
  "reth-optimism-node",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
