@@ -66,67 +66,67 @@ base-txpool = { path = "crates/client/txpool" }
 base-flashblocks = { path = "crates/client/flashblocks" }
 
 # reth
-reth-ipc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-exex = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-tracing = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-cli = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-cli-commands = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-cli-util = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-provider = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-db-common = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-rpc-layer = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-node-core = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-rpc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-rpc-eth-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-rpc-convert = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-rpc-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-optimism-cli = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-optimism-rpc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3", features = [
+reth-ipc = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
+reth-evm = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
+reth-exex = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
+reth-tracing = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
+reth-cli = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
+reth-cli-commands = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
+reth-cli-util = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
+reth-provider = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
+reth-db-common = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
+reth-rpc-layer = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
+reth-node-core = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
+reth-primitives = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
+reth-rpc = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
+reth-rpc-eth-api = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
+reth-rpc-convert = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
+reth-rpc-api = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
+reth-optimism-cli = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
+reth-optimism-rpc = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch", features = [
     "client",
 ] }
-reth-optimism-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-testing-utils = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-optimism-node = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-e2e-test-utils = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-transaction-pool = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-rpc-eth-types = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-optimism-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-optimism-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-db = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3", features = [
+reth-optimism-evm = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
+reth-testing-utils = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
+reth-optimism-node = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
+reth-e2e-test-utils = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
+reth-transaction-pool = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
+reth-rpc-eth-types = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
+reth-primitives-traits = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
+reth-optimism-chainspec = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
+reth-optimism-primitives = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
+reth-db = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch", features = [
     "op",
 ] }
-reth-chain-state = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-errors = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-payload-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-node-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-rpc-engine-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-node-ethereum = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-trie = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-trie-common = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-trie-parallel = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-basic-payload-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-storage-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-evm-ethereum = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-execution-errors = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-tasks = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-metrics = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-trie-db = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-payload-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-execution-types = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-revm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-payload-builder-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-payload-util = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-network-peers = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-node-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-tracing-otlp = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-optimism-consensus = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-optimism-forks = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-optimism-payload-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-optimism-txpool = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
+reth-chain-state = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
+reth-errors = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
+reth-payload-builder = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
+reth-node-api = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
+reth-rpc-engine-api = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
+reth-node-ethereum = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
+reth-trie = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
+reth-trie-common = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
+reth-trie-parallel = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
+reth-basic-payload-builder = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
+reth-chainspec = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
+reth-storage-api = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
+reth-evm-ethereum = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
+reth-execution-errors = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
+reth-tasks = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
+reth-metrics = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
+reth-trie-db = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
+reth-payload-primitives = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
+reth-execution-types = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
+reth-revm = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
+reth-payload-builder-primitives = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
+reth-payload-util = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
+reth-network-peers = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
+reth-node-builder = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
+reth-tracing-otlp = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
+reth-optimism-consensus = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
+reth-optimism-forks = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
+reth-optimism-payload-builder = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
+reth-optimism-txpool = { git = "https://github.com/base/reth", branch = "danyal/v1.9.3-patch" }
 
 # revm
 revm = { version = "31.0.2", features = [
