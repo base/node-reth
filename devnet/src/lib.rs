@@ -24,6 +24,7 @@ pub mod host;
 pub mod images;
 pub mod l1;
 pub mod l2;
+pub mod load;
 pub mod network;
 pub mod rpc;
 pub mod setup;
