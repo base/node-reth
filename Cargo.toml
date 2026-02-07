@@ -116,7 +116,6 @@ base-metering = { path = "crates/client/metering" }
 base-txpool = { path = "crates/client/txpool" }
 
 # Builder
-base-builder-cli = { path = "crates/builder/cli" }
 base-builder-core = { path = "crates/builder/core" }
 
 # Kona
