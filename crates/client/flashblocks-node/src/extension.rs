@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use base_client_node::{BaseBuilder, BaseNodeExtension, FromExtensionConfig};
+use base_client_node::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use base_flashblocks::{
     EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer, FlashblocksConfig,
     FlashblocksSubscriber,
@@ -28,7 +28,7 @@ impl FlashblocksExtension {
 
 impl BaseNodeExtension for FlashblocksExtension {
     /// Applies the extension to the supplied builder.
-    fn apply(self: Box<Self>, builder: BaseBuilder) -> BaseBuilder {
+    fn apply(self: Box<Self>, builder: NodeHooks) -> NodeHooks {
         let Some(cfg) = self.config else {
             info!(message = "flashblocks integration is disabled");
             return builder;

@@ -20,6 +20,7 @@ workspace = true
 # Workspace
 base-builder-core.workspace = true
 base-cli-utils.workspace = true
+base-client-node.workspace = true
 
 # CLI
 clap.workspace = true
@@ -27,8 +28,6 @@ clap.workspace = true
 # reth
 reth-optimism-cli = { workspace = true, features = ["otlp"] }
 reth-optimism-node.workspace = true
-reth-optimism-rpc = { workspace = true, features = ["client"] }
-reth-optimism-txpool.workspace = true
 reth-cli-util.workspace = true
 
 # misc

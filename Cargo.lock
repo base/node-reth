@@ -1794,13 +1794,12 @@ version = "0.0.0"
 dependencies = [
  "base-builder-core",
  "base-cli-utils",
+ "base-client-node",
  "clap",
  "eyre",
  "reth-cli-util",
  "reth-optimism-cli",
  "reth-optimism-node",
- "reth-optimism-rpc",
- "reth-optimism-txpool",
  "rstest",
 ]
 
@@ -1832,6 +1831,7 @@ dependencies = [
  "base-access-lists",
  "base-builder-core",
  "base-bundles",
+ "base-client-node",
  "base-flashtypes",
  "chrono",
  "clap",

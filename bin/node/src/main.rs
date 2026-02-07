@@ -5,7 +5,7 @@
 
 pub mod cli;
 
-use base_client_node::BaseNodeRunner;
+use base_client_node::NodeRunner;
 use base_flashblocks::FlashblocksConfig;
 use base_flashblocks_node::FlashblocksExtension;
 use base_metering::{MeteringConfig, MeteringExtension};
@@ -25,7 +25,7 @@ fn main() {
     let cli = base_cli_utils::parse_cli!(NodeCli);
 
     cli.run(|builder, args| async move {
-        let mut runner = BaseNodeRunner::new(args.rollup_args.clone());
+        let mut runner = NodeRunner::new(args.rollup_args.clone());
 
         // Create flashblocks config first so we can share its state with metering
         let flashblocks_config: Option<FlashblocksConfig> = (&args).into();
@@ -44,8 +44,7 @@ fn main() {
         runner.install_ext::<FlashblocksExtension>(flashblocks_config);
         runner.install_ext::<ProofsHistoryExtension>(args.rollup_args);
 
-        let handle = runner.run(builder);
-        handle.await
+        runner.run(builder).await
     })
     .unwrap();
 }

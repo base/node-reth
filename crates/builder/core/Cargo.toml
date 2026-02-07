@@ -13,6 +13,7 @@ workspace = true
 
 [dependencies]
 base-bundles.workspace = true
+base-client-node.workspace = true
 base-flashtypes.workspace = true
 base-access-lists.workspace = true
 
@@ -179,6 +180,7 @@ min-trace-logs = [ "tracing/release_max_level_trace" ]
 
 test-utils = [
 	"base-bundles/test-utils",
+	"base-client-node/test-utils",
 	"ctor",
 	"http-body-util",
 	"hyper",

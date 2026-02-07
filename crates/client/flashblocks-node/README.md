@@ -11,13 +11,13 @@ This crate provides the Flashblocks extension for the Base node, which enables r
 
 ### Programmatic Integration
 
-To integrate the Flashblocks extension into your node, use the `install_ext` method on your `BaseNodeRunner`:
+To integrate the Flashblocks extension into your node, use the `install_ext` method on your `NodeRunner`:
 
 ```rust
-use base_client_node::BaseNodeRunner;
+use base_client_node::NodeRunner;
 use base_flashblocks_node::{FlashblocksConfig, FlashblocksExtension};
 
-let mut runner = BaseNodeRunner::new(rollup_args);
+let mut runner = NodeRunner::new(rollup_args);
 
 // Create flashblocks configuration
 let flashblocks_config: Option<FlashblocksConfig> = args.into();

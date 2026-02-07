@@ -23,7 +23,7 @@ use reth_provider::providers::BlockchainProvider;
 use reth_tasks::TaskManager;
 
 use crate::{
-    BaseBuilder, BaseNodeExtension, OpProvider, node::BaseNode, test_utils::engine::EngineApi,
+    BaseNodeExtension, NodeHooks, OpProvider, node::BaseNode, test_utils::engine::EngineApi,
 };
 
 /// Convenience alias for the local blockchain provider type.
@@ -96,7 +96,7 @@ impl LocalNode {
         node_config = node_config
             .with_datadir_args(DatadirArgs { datadir: datadir_path, ..Default::default() });
 
-        let builder = NodeBuilder::new(node_config.clone())
+        let configured = NodeBuilder::new(node_config.clone())
             .with_database(db)
             .with_launch_context(exec.clone())
             .with_types_and_provider::<BaseNode, BlockchainProvider<_>>()
@@ -104,29 +104,25 @@ impl LocalNode {
             .with_add_ons(op_node.add_ons())
             .on_component_initialized(move |_ctx| Ok(()));
 
-        // Apply all extensions
-        let builder = extensions
+        // Collect hooks from extensions and apply to configured builder
+        let hooks = extensions
             .into_iter()
-            .fold(BaseBuilder::new(builder), |builder, extension| extension.apply(builder));
+            .fold(NodeHooks::new(), |builder, extension| extension.apply(builder));
+        let configured = hooks.apply_to(configured);
 
         // Launch with EngineNodeLauncher
-        let NodeHandle { node: node_handle, node_exit_future } = builder
-            .launch_with_fn(|builder| {
-                let engine_tree_config = TreeConfig::default()
-                    .with_persistence_threshold(builder.config().engine.persistence_threshold)
-                    .with_memory_block_buffer_target(
-                        builder.config().engine.memory_block_buffer_target,
-                    );
+        let engine_tree_config = TreeConfig::default()
+            .with_persistence_threshold(configured.config().engine.persistence_threshold)
+            .with_memory_block_buffer_target(configured.config().engine.memory_block_buffer_target);
 
-                let launcher = EngineNodeLauncher::new(
-                    builder.task_executor().clone(),
-                    builder.config().datadir(),
-                    engine_tree_config,
-                );
+        let launcher = EngineNodeLauncher::new(
+            configured.task_executor().clone(),
+            configured.config().datadir(),
+            engine_tree_config,
+        );
 
-                builder.launch_with(launcher)
-            })
-            .await?;
+        let NodeHandle { node: node_handle, node_exit_future } =
+            configured.launch_with(launcher).await?;
 
         let http_api_addr = node_handle
             .rpc_server_handle()
