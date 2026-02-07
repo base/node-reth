@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use base_client_node::{BaseBuilder, BaseNodeExtension, FromExtensionConfig};
+use base_client_node::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use base_flashblocks::{FlashblocksConfig, FlashblocksState};
 use tracing::info;
 
@@ -27,7 +27,7 @@ impl MeteringExtension {
 
 impl BaseNodeExtension for MeteringExtension {
     /// Applies the extension to the supplied builder.
-    fn apply(self: Box<Self>, builder: BaseBuilder) -> BaseBuilder {
+    fn apply(self: Box<Self>, builder: NodeHooks) -> NodeHooks {
         if !self.enabled {
             return builder;
         }

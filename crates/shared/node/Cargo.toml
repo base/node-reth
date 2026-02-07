@@ -67,7 +67,6 @@ jsonrpsee = { workspace = true, optional = true }
 eyre.workspace = true
 futures-util.workspace = true
 tracing.workspace = true
-derive_more = { workspace = true, features = ["debug"] }
 tracing-subscriber = { workspace = true, optional = true }
 url = { workspace = true, optional = true }
 chrono = { workspace = true, optional = true }

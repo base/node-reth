@@ -7,9 +7,6 @@
 mod config;
 pub use config::BuilderConfig;
 
-mod engine;
-pub use engine::OpEngineApiBuilder;
-
 mod metrics;
 pub use metrics::BuilderMetrics;
 
@@ -17,7 +14,7 @@ mod execution;
 pub use execution::{ExecutionInfo, TxnExecutionError, TxnOutcome};
 
 mod traits;
-pub use traits::{ClientBounds, NodeBounds, NodeComponents, PayloadTxsBounds, PoolBounds};
+pub use traits::{ClientBounds, NodeBounds, PayloadTxsBounds, PoolBounds};
 
 mod storage;
 pub use storage::{BaseApiExtServer, StoreData, TxData, TxDataStore, TxDataStoreExt};

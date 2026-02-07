@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use base_client_node::{BaseBuilder, BaseNodeExtension, FromExtensionConfig};
+use base_client_node::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use base_flashblocks::{FlashblocksConfig, FlashblocksState};
 use reth_provider::CanonStateSubscriptions;
 use tokio_stream::wrappers::BroadcastStream;
@@ -43,7 +43,7 @@ impl TxPoolExtension {
 
 impl BaseNodeExtension for TxPoolExtension {
     /// Applies the extension to the supplied builder.
-    fn apply(self: Box<Self>, builder: BaseBuilder) -> BaseBuilder {
+    fn apply(self: Box<Self>, builder: NodeHooks) -> NodeHooks {
         let config = self.config;
 
         // Extend with RPC modules and optionally start tracing subscription
