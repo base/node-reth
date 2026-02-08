@@ -1,6 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
-use base_client_node::{BaseBuilder, BaseNodeExtension, FromExtensionConfig};
+use base_client_node::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use reth_db::database_metrics::DatabaseMetrics;
 use reth_node_api::FullNodeComponents;
 use reth_optimism_exex::OpProofsExEx;
@@ -33,8 +33,8 @@ impl ProofsHistoryExtension {
 
 impl BaseNodeExtension for ProofsHistoryExtension {
     /// Applies the extension to the supplied builder.
-    fn apply(self: Box<Self>, mut builder: BaseBuilder) -> BaseBuilder {
-        // TODO: if BaseBuilder exposes the underlying OpBuilder, we can call launch_node_with_proof_history
+    fn apply(self: Box<Self>, mut builder: NodeHooks) -> NodeHooks {
+        // TODO: if NodeHooks exposes the underlying OpBuilder, we can call launch_node_with_proof_history
         let args = self.config;
         let proofs_history_enabled = args.proofs_history;
         let proofs_history_window = args.proofs_history_window;

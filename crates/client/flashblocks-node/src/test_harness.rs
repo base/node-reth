@@ -19,7 +19,7 @@ use alloy_eips::{BlockHashOrNumber, Encodable2718};
 use alloy_primitives::{Address, B256, BlockNumber, Bytes, U256, hex::FromHex, map::HashMap};
 use alloy_rpc_types_engine::PayloadId;
 use base_client_node::{
-    BaseBuilder, BaseNodeExtension,
+    BaseNodeExtension, NodeHooks,
     test_utils::{
         Account, L1_BLOCK_INFO_DEPOSIT_TX, L1_BLOCK_INFO_DEPOSIT_TX_HASH, LocalNode,
         LocalNodeProvider, NODE_STARTUP_DELAY_MS, TestHarness, build_test_genesis,
@@ -132,7 +132,7 @@ impl FlashblocksTestExtension {
 }
 
 impl BaseNodeExtension for FlashblocksTestExtension {
-    fn apply(self: Box<Self>, builder: BaseBuilder) -> BaseBuilder {
+    fn apply(self: Box<Self>, builder: NodeHooks) -> NodeHooks {
         let state = Arc::clone(&self.inner.state);
         let receiver = Arc::clone(&self.inner.receiver);
         let process_canonical = self.inner.process_canonical;
