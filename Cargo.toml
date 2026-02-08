@@ -106,6 +106,7 @@ base-jwt = { path = "crates/shared/jwt" }
 base-primitives = { path = "crates/shared/primitives" }
 base-proofs-extension = { path = "crates/client/proofs" }
 base-reth-rpc-types = { path = "crates/shared/reth-rpc-types" }
+base-txpool-rpc = { path = "crates/shared/txpool-rpc" }
 
 # Client
 base-client-cli = { path = "crates/client/cli" }
@@ -113,7 +114,7 @@ base-client-engine = { path = "crates/client/engine" }
 base-client-node = { path = "crates/shared/node" }
 base-flashblocks = { path = "crates/client/flashblocks" }
 base-metering = { path = "crates/client/metering" }
-base-txpool = { path = "crates/client/txpool" }
+base-txpool-tracing = { path = "crates/client/txpool-tracing" }
 
 # Builder
 base-builder-core = { path = "crates/builder/core" }

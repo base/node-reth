@@ -23,10 +23,7 @@ type BaseComponents = <OpComponentsBuilder as NodeComponentsBuilder<OpNodeTypes>
 ///
 /// Because `Components` depends only on pool, network, executor, and consensus builders (not the
 /// payload service builder), this type is identical regardless of which payload service is used.
-pub(crate) type OpNodeAdapter = NodeAdapter<
-    OpNodeTypes,
-    BaseComponents,
->;
+pub(crate) type OpNodeAdapter = NodeAdapter<OpNodeTypes, BaseComponents>;
 
 /// Convenience alias for the OP Eth API type exposed by the reth RPC add-ons.
 type OpEthApi = <OpAddOns as RethRpcAddOns<OpNodeAdapter>>::EthApi;
