@@ -8,6 +8,7 @@ mod extension;
 
 use base_builder_core::{BuilderConfig, FlashblocksServiceBuilder};
 use base_client_node::NodeRunner;
+use base_txpool_rpc::{TxPoolRpcConfig, TxPoolRpcExtension};
 use extension::TxDataStoreExtension;
 use reth_optimism_cli::{Cli, chainspec::OpChainSpecParser};
 
@@ -30,6 +31,7 @@ fn main() {
         let mut runner = NodeRunner::new(builder_args.rollup_args.clone())
             .with_service_builder(FlashblocksServiceBuilder(builder_config));
         runner.install_ext::<TxDataStoreExtension>(tx_data_store);
+        runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig::default());
 
         runner.run(builder).await
     })

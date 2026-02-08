@@ -21,6 +21,7 @@ workspace = true
 base-builder-core.workspace = true
 base-cli-utils.workspace = true
 base-client-node.workspace = true
+base-txpool-rpc.workspace = true
 
 # CLI
 clap.workspace = true

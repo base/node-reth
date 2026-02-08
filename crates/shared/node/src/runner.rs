@@ -6,7 +6,8 @@ use reth_provider::providers::BlockchainProvider;
 use tracing::info;
 
 use crate::{
-    FromExtensionConfig, NodeHooks, BaseNodeExtension, BaseNodeBuilder, node::BaseNode,
+    BaseNodeBuilder, BaseNodeExtension, FromExtensionConfig, NodeHooks,
+    node::BaseNode,
     service::{DefaultPayloadServiceBuilder, PayloadServiceBuilder},
 };
 
