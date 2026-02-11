@@ -50,6 +50,7 @@ op-alloy-flz.workspace = true
 # metrics
 metrics.workspace = true
 metrics-derive.workspace = true
+parking_lot.workspace = true
 
 # misc
 eyre.workspace = true
