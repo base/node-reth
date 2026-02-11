@@ -153,6 +153,7 @@ impl BaseNodeExtension for MeteringExtension {
                     percentile,
                     resource_limits,
                     default_fee,
+                    None,
                 ));
 
                 // Create channels for the annotator

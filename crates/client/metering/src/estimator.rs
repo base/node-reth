@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use alloy_primitives::U256;
 use parking_lot::RwLock;
+use reth_optimism_payload_builder::config::OpDAConfig;
 
 use crate::cache::{MeteredTransaction, MeteringCache};
 
@@ -265,6 +266,10 @@ pub struct PriorityFeeEstimator {
     percentile: f64,
     limits: ResourceLimits,
     default_priority_fee: U256,
+    /// Optional shared DA config from the miner RPC. When set, the estimator uses
+    /// `max_da_block_size` from this config instead of `limits.data_availability_bytes`.
+    /// This allows dynamic updates via `miner_setMaxDASize`.
+    da_config: Option<OpDAConfig>,
 }
 
 impl PriorityFeeEstimator {
@@ -276,18 +281,32 @@ impl PriorityFeeEstimator {
     ///   to use for the recommended fee.
     /// - `limits`: Configured resource capacity limits.
     /// - `default_priority_fee`: Fee to return when a resource is not congested.
+    /// - `da_config`: Optional shared DA config for dynamic DA limit updates.
     pub const fn new(
         cache: Arc<RwLock<MeteringCache>>,
         percentile: f64,
         limits: ResourceLimits,
         default_priority_fee: U256,
+        da_config: Option<OpDAConfig>,
     ) -> Self {
-        Self { cache, percentile, limits, default_priority_fee }
+        Self { cache, percentile, limits, default_priority_fee, da_config }
     }
 
-    /// Returns the limit for the given resource kind.
+    /// Returns the current DA block size limit, preferring the dynamic `OpDAConfig` value
+    /// if available, otherwise falling back to the static limit.
+    pub fn max_da_block_size(&self) -> Option<u64> {
+        self.da_config
+            .as_ref()
+            .and_then(|c| c.max_da_block_size())
+            .or(self.limits.data_availability_bytes)
+    }
+
+    /// Returns the limit for the given resource kind, using dynamic config where available.
     fn limit_for(&self, resource: ResourceKind) -> Option<u128> {
-        self.limits.limit_for(resource)
+        match resource {
+            ResourceKind::DataAvailability => self.max_da_block_size().map(|v| v as u128),
+            _ => self.limits.limit_for(resource),
+        }
     }
 
     /// Returns fee estimates for the provided block. If `block_number` is `None`
@@ -815,7 +834,7 @@ mod tests {
         limits: ResourceLimits,
     ) -> (Arc<RwLock<MeteringCache>>, PriorityFeeEstimator) {
         let cache = Arc::new(RwLock::new(MeteringCache::new(4)));
-        let estimator = PriorityFeeEstimator::new(cache.clone(), 0.5, limits, DEFAULT_FEE);
+        let estimator = PriorityFeeEstimator::new(cache.clone(), 0.5, limits, DEFAULT_FEE, None);
         (cache, estimator)
     }
 
@@ -886,5 +905,219 @@ mod tests {
         // Median across [10, 30] = 30 (upper median for even count)
         assert_eq!(gas_estimate.recommended_priority_fee, U256::from(30));
         assert_eq!(rolling.priority_fee, U256::from(30));
+    }
+
+    // === Dynamic DA Config Tests (PR 3) ===
+
+    #[test]
+    fn max_da_block_size_prefers_dynamic_config() {
+        let cache = Arc::new(RwLock::new(MeteringCache::new(4)));
+        let limits = ResourceLimits {
+            gas_used: Some(1000),
+            execution_time_us: None,
+            state_root_time_us: None,
+            data_availability_bytes: Some(1000), // Static limit
+        };
+        // Dynamic config with different DA limit
+        let da_config = OpDAConfig::new(100, 2000);
+        let estimator = PriorityFeeEstimator::new(cache, 0.5, limits, DEFAULT_FEE, Some(da_config));
+
+        // Should prefer dynamic config (2000) over static limit (1000)
+        assert_eq!(estimator.max_da_block_size(), Some(2000));
+    }
+
+    #[test]
+    fn max_da_block_size_falls_back_to_static_limit() {
+        let cache = Arc::new(RwLock::new(MeteringCache::new(4)));
+        let limits = ResourceLimits {
+            gas_used: Some(1000),
+            execution_time_us: None,
+            state_root_time_us: None,
+            data_availability_bytes: Some(1500), // Static limit
+        };
+        // Default OpDAConfig has no max_da_block_size set
+        let da_config = OpDAConfig::default();
+        let estimator = PriorityFeeEstimator::new(cache, 0.5, limits, DEFAULT_FEE, Some(da_config));
+
+        // Should fall back to static limit (1500)
+        assert_eq!(estimator.max_da_block_size(), Some(1500));
+    }
+
+    #[test]
+    fn limit_for_uses_dynamic_da_for_data_availability_only() {
+        let cache = Arc::new(RwLock::new(MeteringCache::new(4)));
+        let limits = ResourceLimits {
+            gas_used: Some(1000),
+            execution_time_us: Some(5000),
+            state_root_time_us: None,
+            data_availability_bytes: Some(1000), // Static limit
+        };
+        let da_config = OpDAConfig::new(100, 3000); // Dynamic DA limit
+        let estimator = PriorityFeeEstimator::new(cache, 0.5, limits, DEFAULT_FEE, Some(da_config));
+
+        // DataAvailability should use dynamic config
+        assert_eq!(estimator.limit_for(ResourceKind::DataAvailability), Some(3000));
+        // Other resources should use static limits
+        assert_eq!(estimator.limit_for(ResourceKind::GasUsed), Some(1000));
+        assert_eq!(estimator.limit_for(ResourceKind::ExecutionTime), Some(5000));
+    }
+
+    // === Per-Flashblock Estimation Tests (PR 1b) ===
+
+    #[test]
+    fn estimate_for_block_returns_none_for_empty_cache() {
+        let (_, estimator) = setup_estimator(DEFAULT_LIMITS);
+        let demand = ResourceDemand { gas_used: Some(10), ..Default::default() };
+
+        let result = estimator.estimate_for_block(Some(1), demand).expect("no error");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn estimate_for_block_returns_none_for_missing_block() {
+        let (cache, estimator) = setup_estimator(DEFAULT_LIMITS);
+        {
+            let mut guard = cache.write();
+            guard.push_transaction(1, 0, tx(10, 10));
+        }
+        let demand = ResourceDemand { gas_used: Some(10), ..Default::default() };
+
+        // Block 2 doesn't exist
+        let result = estimator.estimate_for_block(Some(2), demand).expect("no error");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn estimate_for_block_multiple_flashblocks_computes_min_max() {
+        let limits = ResourceLimits {
+            gas_used: Some(50),
+            execution_time_us: Some(200),
+            state_root_time_us: None,
+            data_availability_bytes: Some(200),
+        };
+        let (cache, estimator) = setup_estimator(limits);
+        {
+            let mut guard = cache.write();
+            // Flashblock 0: high-fee transactions (congested)
+            guard.push_transaction(1, 0, tx(100, 10));
+            guard.push_transaction(1, 0, tx(90, 10));
+            guard.push_transaction(1, 0, tx(80, 10));
+            // Flashblock 1: low-fee transactions (less congested)
+            guard.push_transaction(1, 1, tx(30, 10));
+            guard.push_transaction(1, 1, tx(20, 10));
+            // Flashblock 2: medium-fee transactions
+            guard.push_transaction(1, 2, tx(60, 10));
+            guard.push_transaction(1, 2, tx(50, 10));
+        }
+        let demand = ResourceDemand { gas_used: Some(25), ..Default::default() };
+
+        let result =
+            estimator.estimate_for_block(Some(1), demand).expect("no error").expect("block exists");
+
+        assert_eq!(result.block_number, 1);
+        assert_eq!(result.flashblocks.len(), 3);
+
+        // min_across_flashblocks should have the lowest recommended fee
+        let min_gas = result.min_across_flashblocks.gas_used.expect("gas estimate");
+        // max_across_flashblocks should have the highest recommended fee
+        let max_gas = result.max_across_flashblocks.gas_used.expect("gas estimate");
+
+        assert!(min_gas.recommended_priority_fee <= max_gas.recommended_priority_fee);
+    }
+
+    #[test]
+    fn estimate_for_block_uses_most_recent_when_block_none() {
+        let (cache, estimator) = setup_estimator(DEFAULT_LIMITS);
+        {
+            let mut guard = cache.write();
+            guard.push_transaction(1, 0, tx(10, 10));
+            guard.push_transaction(2, 0, tx(20, 10));
+            guard.push_transaction(3, 0, tx(30, 10));
+        }
+        let demand = ResourceDemand { gas_used: Some(10), ..Default::default() };
+
+        // Pass None for block_number - should use most recent (block 3)
+        let result =
+            estimator.estimate_for_block(None, demand).expect("no error").expect("block exists");
+
+        assert_eq!(result.block_number, 3);
+    }
+
+    // === Rolling Estimate Tests (PR 1c) ===
+
+    #[test]
+    fn estimate_rolling_returns_none_for_empty_cache() {
+        let (_, estimator) = setup_estimator(DEFAULT_LIMITS);
+        let demand = ResourceDemand { gas_used: Some(10), ..Default::default() };
+
+        let result = estimator.estimate_rolling(demand).expect("no error");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn estimate_rolling_computes_median_for_odd_blocks() {
+        let (cache, estimator) = setup_estimator(DEFAULT_LIMITS);
+        {
+            let mut guard = cache.write();
+            // Block 1: threshold 10
+            guard.push_transaction(1, 0, tx(10, 10));
+            guard.push_transaction(1, 0, tx(5, 10));
+            // Block 2: threshold 20
+            guard.push_transaction(2, 0, tx(20, 10));
+            guard.push_transaction(2, 0, tx(15, 10));
+            // Block 3: threshold 30
+            guard.push_transaction(3, 0, tx(30, 10));
+            guard.push_transaction(3, 0, tx(25, 10));
+        }
+        let demand = ResourceDemand { gas_used: Some(15), ..Default::default() };
+
+        let result = estimator.estimate_rolling(demand).expect("no error").expect("has data");
+
+        assert_eq!(result.blocks_sampled, 3);
+        // Median of [10, 20, 30] = 20 (middle value)
+        let gas_estimate = result.estimates.gas_used.expect("gas estimate");
+        assert_eq!(gas_estimate.recommended_priority_fee, U256::from(20));
+    }
+
+    #[test]
+    fn estimate_rolling_priority_fee_is_max_across_resources() {
+        let limits = ResourceLimits {
+            gas_used: Some(50),
+            execution_time_us: Some(50),
+            state_root_time_us: None,
+            data_availability_bytes: Some(50),
+        };
+        let (cache, estimator) = setup_estimator(limits);
+        {
+            let mut guard = cache.write();
+            // Add transactions - all resource types are set to same values
+            guard.push_transaction(1, 0, tx(100, 10));
+            guard.push_transaction(1, 0, tx(50, 10));
+        }
+        let demand = ResourceDemand {
+            gas_used: Some(25),
+            execution_time_us: Some(25),
+            data_availability_bytes: Some(25),
+            ..Default::default()
+        };
+
+        let result = estimator.estimate_rolling(demand).expect("no error").expect("has data");
+
+        // priority_fee should be the max recommended fee across all resources
+        let gas_fee =
+            result.estimates.gas_used.map(|e| e.recommended_priority_fee).unwrap_or(U256::ZERO);
+        let exec_fee = result
+            .estimates
+            .execution_time
+            .map(|e| e.recommended_priority_fee)
+            .unwrap_or(U256::ZERO);
+        let da_fee = result
+            .estimates
+            .data_availability
+            .map(|e| e.recommended_priority_fee)
+            .unwrap_or(U256::ZERO);
+
+        let expected_max = gas_fee.max(exec_fee).max(da_fee);
+        assert_eq!(result.priority_fee, expected_max);
     }
 }
