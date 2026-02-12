@@ -44,6 +44,9 @@ op-alloy-consensus.workspace = true
 # rpc
 jsonrpsee.workspace = true
 
+# DA calculation
+op-alloy-flz.workspace = true
+
 # metrics
 metrics.workspace = true
 metrics-derive.workspace = true
