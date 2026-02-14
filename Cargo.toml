@@ -146,10 +146,10 @@ basectl-cli = { path = "crates/infra/basectl" }
 based = { path = "crates/infra/based" }
 mempool-rebroadcaster = { path = "crates/infra/mempool-rebroadcaster" }
 
-# Tips
-tips-audit-lib = { path = "crates/infra/audit" }
-tips-ingress-rpc-lib = { path = "crates/infra/ingress-rpc" }
-tips-system-tests = { path = "crates/infra/system-tests" }
+# Infra
+audit-archiver-lib = { path = "crates/infra/audit" }
+ingress-rpc-lib = { path = "crates/infra/ingress-rpc" }
+system-tests = { path = "crates/infra/system-tests" }
 
 # Kona
 kona-cli = { git = "https://github.com/ethereum-optimism/optimism", rev = "238012d2d96d5cebbdc390c9199bd63722115a42", default-features = false }
