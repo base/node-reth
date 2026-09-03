@@ -9,7 +9,7 @@
 
 pub use base_reth_cli::{
     ChunkFilename, ChunkedArchive, ComponentManifest, ManifestGenerationParams, OutputFileChecksum,
-    SingleArchive, SnapshotGenerator, SnapshotManifest, SnapshotManifestExt,
+    ProofsStaticManifest, SingleArchive, SnapshotGenerator, SnapshotManifest, SnapshotManifestExt,
 };
 
 mod config;
