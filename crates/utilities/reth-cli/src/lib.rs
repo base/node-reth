@@ -16,5 +16,6 @@ pub use snapshots::Snapshots;
 mod snapshot_manifest;
 pub use snapshot_manifest::{
     ChunkFilename, ChunkedArchive, ComponentManifest, ManifestGenerationParams, OutputFileChecksum,
-    SingleArchive, SnapshotGenerator, SnapshotManifest, SnapshotManifestExt,
+    ProofsStaticManifest, RocksDbStaticManifest, RocksdbStaticManifest, SingleArchive,
+    SnapshotGenerator, SnapshotManifest, SnapshotManifestExt,
 };
