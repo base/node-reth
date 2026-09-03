@@ -7,7 +7,9 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
-use base_reth_cli::{ManifestGenerationParams, SnapshotGenerator, SnapshotManifest};
+use base_reth_cli::{
+    ManifestGenerationParams, ProofsStaticManifest, SnapshotGenerator, SnapshotManifest,
+};
 use tracing::{error, info, warn};
 
 use crate::{
@@ -267,6 +269,8 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
             .context("failed to read run manifest.json")?;
         let local_manifest: SnapshotManifest =
             serde_json::from_slice(&manifest_bytes).context("failed to parse run manifest.json")?;
+        let proofs_static = ProofsStaticManifest::from_manifest_bytes(&manifest_bytes)
+            .context("failed to parse proofs_static manifest extension")?;
 
         self.uploader
             .upload(SnapshotUploadParams {
@@ -277,6 +281,7 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
                 local_manifest: &local_manifest,
                 remote_manifest,
                 remote_static_files,
+                proofs_static: proofs_static.as_ref(),
             })
             .await
             .with_context(|| {
