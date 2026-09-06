@@ -180,7 +180,7 @@ async fn build_new_block(
     let eip_1559_params: u64 = ((50_u64) << 32) | 2_u64;
 
     let mut transactions = vec![];
-    if node.chain_spec.is_denim_active_at_timestamp(block_timestamp) {
+    if node.chain_spec.is_cobalt_active_at_timestamp(block_timestamp) {
         // FCU validates the mandatory BaseTime deposit even in this isolated builder smoke test.
         // The mainnet genesis fixture has the Bedrock L1Block contract.
         let mut rollup_config = RollupConfig::default();

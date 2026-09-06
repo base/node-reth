@@ -1,4 +1,4 @@
-//! End-to-end test for post-Beryl builder retirement and the separate Denim block-time cutover.
+//! End-to-end test for the Cobalt builder and 200ms cutover, with no later Denim timing change.
 
 use std::time::Duration;
 
@@ -27,7 +27,7 @@ const BLOCK_TIMEOUT: Duration = Duration::from_secs(45);
 const REPLAY_QUIET_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[tokio::test]
-async fn retires_flashblocks_at_cobalt_before_denim_block_time_cutover() -> Result<()> {
+async fn cuts_over_builder_and_block_time_at_cobalt() -> Result<()> {
     base_node_runner::test_utils::init_silenced_tracing();
 
     let system = SystemTestStackBuilder::new()
@@ -134,7 +134,7 @@ async fn verify_chain_and_cadence(
             .timestamp_ms
             .unwrap_or_else(|| builder_block.header.timestamp.saturating_mul(1_000));
         if let Some(previous) = previous_timestamp_ms {
-            let expected_delta = if number <= DENIM_ACTIVATION_BLOCK { 2_000 } else { 200 };
+            let expected_delta = if number <= COBALT_ACTIVATION_BLOCK { 2_000 } else { 200 };
             assert_eq!(timestamp_ms - previous, expected_delta, "block {number} cadence mismatch");
         }
 

@@ -75,19 +75,18 @@ Anvil mines one block every 12 seconds. Do not use timestamp-warp RPCs in
 this variant: Base derives Beacon slots from L1 timestamps, so arbitrary time
 jumps would break the one-slot-per-execution-block mapping used to fetch blobs.
 
-Denim activates at block 25 by default and switches the sequencer to its 200ms
+Cobalt activates at block 22 by default and switches the sequencer to its 200ms
 cadence. The local Nitro stack exercises proof generation across this boundary:
 
 ```bash
 just anvil-nitro-local up
 ```
 
-Set `L2_BASE_DENIM_BLOCK` to another block to move activation, or set it to an
-empty value to run a pre-Denim devnet.
+Set `L2_BASE_COBALT_BLOCK` to another block to move activation, or set it to an
+empty value to leave Cobalt unscheduled.
 
 To exercise Cobalt validity transactions on the native payload builder, the
-deployment must schedule Cobalt no later than Denim and configure both sides of
-the forwarding path:
+deployment must schedule Cobalt and configure both sides of the forwarding path:
 
 - builder: `--builder.enable-experimental-validity-transactions`, which also registers
   `base_sendRawTransactionValidity` for direct ingress. Native builder selection is automatic
@@ -96,9 +95,10 @@ the forwarding path:
   `--builder-rpc-urls` endpoint targeting the builder
 
 The default devnet compose files include these flags and schedule Cobalt at
-block 22 followed by Denim at block 25. Native payload building supports balance,
-storage, and block-number predicates; `flashblock_index` predicates remain
-specific to the Flashblocks builder and are rejected after the Denim cutover.
+block 22 followed by Denim at block 25. The later Denim activation changes neither
+builder selection nor block cadence. Native payload building supports balance,
+storage, and block-number predicates; `flashblock_index` predicates remain specific
+to the Flashblocks builder and are rejected after the Cobalt cutover.
 
 Zenith is the permanently unscheduled, genesis-only gate for future hardfork feature testing.
 Zenith mode additionally activates Zenith at block 100:

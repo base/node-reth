@@ -537,7 +537,7 @@ mod tests {
 
     use super::*;
 
-    const DENIM_TIMESTAMP: u64 = 10;
+    const COBALT_TIMESTAMP: u64 = 10;
 
     fn test_router() -> (
         MultiplexRouter,
@@ -553,7 +553,7 @@ mod tests {
             HealthState::new(),
             Arc::new(
                 BaseChainSpecBuilder::base_mainnet()
-                    .with_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(DENIM_TIMESTAMP))
+                    .with_fork(BaseUpgrade::Cobalt, ForkCondition::Timestamp(COBALT_TIMESTAMP))
                     .build(),
             ),
         );
@@ -580,7 +580,8 @@ mod tests {
 
     #[tokio::test]
     async fn build_fans_out_before_post_beryl_activation_and_uses_only_basic_after() {
-        for (timestamp, selected_basic) in [(DENIM_TIMESTAMP - 1, false), (DENIM_TIMESTAMP, true)] {
+        for (timestamp, selected_basic) in [(COBALT_TIMESTAMP - 1, false), (COBALT_TIMESTAMP, true)]
+        {
             let (mut router, mut flash_rx, mut basic_rx) = test_router();
             let (tx, rx) = tokio::sync::oneshot::channel();
 
@@ -690,7 +691,7 @@ mod tests {
     async fn post_beryl_native_error_does_not_fall_back_to_flashblocks() {
         let (mut router, mut flash_rx, mut basic_rx) = test_router();
         let (tx, rx) = tokio::sync::oneshot::channel();
-        let response = router.handle_build_new_payload(sample_input(DENIM_TIMESTAMP), tx);
+        let response = router.handle_build_new_payload(sample_input(COBALT_TIMESTAMP), tx);
 
         let PayloadServiceCommand::BuildNewPayload(_, _, tx) =
             basic_rx.recv().await.expect("native build command")
@@ -777,27 +778,27 @@ mod tests {
         let mut sub = sub_rx.await.expect("outer subscribe receiver");
 
         flash_events_tx
-            .send(Events::Attributes(sample_input(DENIM_TIMESTAMP - 1).attributes))
-            .expect("send pre-Denim flash event");
+            .send(Events::Attributes(sample_input(COBALT_TIMESTAMP - 1).attributes))
+            .expect("send pre-Cobalt flash event");
         assert_eq!(
             MultiplexRouter::event_timestamp(&sub.recv().await.expect("receive flash event")),
-            DENIM_TIMESTAMP - 1
+            COBALT_TIMESTAMP - 1
         );
 
         basic_events_tx
-            .send(Events::Attributes(sample_input(DENIM_TIMESTAMP - 1).attributes))
-            .expect("send rejected pre-Denim basic event");
+            .send(Events::Attributes(sample_input(COBALT_TIMESTAMP - 1).attributes))
+            .expect("send rejected pre-Cobalt basic event");
         flash_events_tx
-            .send(Events::Attributes(sample_input(DENIM_TIMESTAMP).attributes))
-            .expect("send rejected post-Denim flash event");
+            .send(Events::Attributes(sample_input(COBALT_TIMESTAMP).attributes))
+            .expect("send rejected post-Cobalt flash event");
         assert!(tokio::time::timeout(Duration::from_millis(50), sub.recv()).await.is_err());
 
         basic_events_tx
-            .send(Events::Attributes(sample_input(DENIM_TIMESTAMP).attributes))
-            .expect("send post-Denim basic event");
+            .send(Events::Attributes(sample_input(COBALT_TIMESTAMP).attributes))
+            .expect("send post-Cobalt basic event");
         assert_eq!(
             MultiplexRouter::event_timestamp(&sub.recv().await.expect("receive basic event")),
-            DENIM_TIMESTAMP
+            COBALT_TIMESTAMP
         );
 
         drop(sub);
@@ -813,7 +814,7 @@ mod tests {
         let (router_tx, router_rx) = mpsc::unbounded_channel();
         let handle = PayloadBuilderHandle::new(router_tx);
         let router_task = tokio::spawn(router.run(router_rx));
-        let input = sample_input(DENIM_TIMESTAMP);
+        let input = sample_input(COBALT_TIMESTAMP);
         let payload_id = input.payload_id();
 
         let build_rx = handle.send_new_payload(input);
@@ -849,7 +850,7 @@ mod tests {
 
     #[tokio::test]
     async fn stalled_shadow_does_not_block_selected_builder() {
-        for timestamp in [DENIM_TIMESTAMP - 2, DENIM_TIMESTAMP - 1] {
+        for timestamp in [COBALT_TIMESTAMP - 2, COBALT_TIMESTAMP - 1] {
             let (router, mut flash_rx, mut basic_rx) = test_router();
             let (router_tx, router_rx) = mpsc::unbounded_channel();
             let handle = PayloadBuilderHandle::new(router_tx);
