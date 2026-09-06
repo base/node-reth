@@ -53,15 +53,28 @@ impl RunningNode {
         .await
     }
 
+    async fn launch_disabled() -> eyre::Result<Self> {
+        Self::launch(
+            MultiplexingServiceBuilder::new(test_builder_config()),
+            BaseChainSpec::mainnet(),
+        )
+        .await
+    }
+
     async fn launch_multiplex() -> eyre::Result<Self> {
-        let service_builder = MultiplexingServiceBuilder::new(test_builder_config());
+        let service_builder =
+            MultiplexingServiceBuilder::new(test_builder_config()).with_cutover_enabled(true);
         Self::launch(service_builder, BaseChainSpec::mainnet()).await
     }
 
     async fn launch_basic() -> eyre::Result<Self> {
-        let service_builder =
-            MultiplexingServiceBuilder::new(test_builder_config()).with_basic_only(true);
-        Self::launch(service_builder, BaseChainSpec::mainnet()).await
+        let config = test_builder_config();
+        let flashblocks_addr = config.flashblocks_ws_addr;
+        let service_builder = MultiplexingServiceBuilder::new(config).with_basic_only(true);
+        let node = Self::launch(service_builder, BaseChainSpec::mainnet()).await?;
+        let _listener = TcpListener::bind(flashblocks_addr)
+            .expect("basic-only mode must leave the Flashblocks port unbound");
+        Ok(node)
     }
 
     async fn launch<SB>(service_builder: SB, chain_spec: BaseChainSpec) -> eyre::Result<Self>
@@ -249,6 +262,9 @@ async fn payload_builder_modes_match_flashblocks_baseline() -> eyre::Result<()> 
     let baseline = RunningNode::launch_flashblocks().await?;
     let baseline_provider = baseline.provider().await?;
 
+    let disabled = RunningNode::launch_disabled().await?;
+    let disabled_provider = disabled.provider().await?;
+
     let multiplex = RunningNode::launch_multiplex().await?;
     let multiplex_provider = multiplex.provider().await?;
 
@@ -269,9 +285,12 @@ async fn payload_builder_modes_match_flashblocks_baseline() -> eyre::Result<()> 
         std::cmp::max(baseline_head.header.timestamp + 2, wall_clock.as_secs() + 2);
     let baseline_block =
         build_new_block(&baseline_provider, &baseline, build_timestamp, true).await?;
+    let disabled_block =
+        build_new_block(&disabled_provider, &disabled, build_timestamp, true).await?;
     let multiplex_block =
         build_new_block(&multiplex_provider, &multiplex, build_timestamp, true).await?;
 
+    assert_eq!(baseline_block, disabled_block);
     assert_eq!(baseline_block, multiplex_block);
 
     let basic = RunningNode::launch_basic().await?;
@@ -282,6 +301,7 @@ async fn payload_builder_modes_match_flashblocks_baseline() -> eyre::Result<()> 
     // Keep the nodes alive until process exit; dropping their independent runtimes can race the
     // remaining providers and database tasks during test teardown.
     std::mem::forget(baseline);
+    std::mem::forget(disabled);
     std::mem::forget(multiplex);
     std::mem::forget(basic);
 
@@ -289,7 +309,7 @@ async fn payload_builder_modes_match_flashblocks_baseline() -> eyre::Result<()> 
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn default_builder_starts_with_scheduled_native_upgrade() -> eyre::Result<()> {
+async fn cutover_builder_starts_with_scheduled_native_upgrade() -> eyre::Result<()> {
     for upgrade in [BaseUpgrade::Cobalt, BaseUpgrade::Denim, BaseUpgrade::Zenith] {
         for timestamp in [0, u64::MAX] {
             let chain_spec = BaseChainSpecBuilder::base_mainnet()
@@ -297,9 +317,12 @@ async fn default_builder_starts_with_scheduled_native_upgrade() -> eyre::Result<
                 .build();
             let config = test_builder_config();
             let url = format!("ws://127.0.0.1:{}", config.flashblocks_ws_addr.port());
-            let node =
-                RunningNode::launch(MultiplexingServiceBuilder::new(config), chain_spec).await?;
-            // The Flashblocks service remains available even when already retired at startup.
+            let node = RunningNode::launch(
+                MultiplexingServiceBuilder::new(config).with_cutover_enabled(true),
+                chain_spec,
+            )
+            .await?;
+            // The Flashblocks service remains available when native is already selected at startup.
             let (mut stream, _) = connect_async(url).await?;
             let provider = node.provider().await?;
             let build_timestamp =

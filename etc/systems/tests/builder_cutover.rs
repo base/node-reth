@@ -1,4 +1,4 @@
-//! End-to-end test for the Cobalt builder and 200ms cutover, with no later Denim timing change.
+//! End-to-end tests for the Cobalt builder and 200ms cutover, with and without later Denim.
 
 use std::time::Duration;
 
@@ -10,6 +10,7 @@ use alloy_provider::{Provider, RootProvider};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use base_common_flashblocks::{FlashblocksPayloadV1, Metadata};
+use base_common_genesis::{BaseUpgrade, RollupConfig};
 use base_common_network::Base;
 use base_common_rpc_types::BaseTransactionRequest;
 use base_system_tests::{ANVIL_ACCOUNT_1, SystemTestStackBuilder};
@@ -21,25 +22,38 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 const L1_CHAIN_ID: u64 = 1337;
 const L2_CHAIN_ID: u64 = 84538453;
 const COBALT_ACTIVATION_BLOCK: u64 = 10;
-const DENIM_ACTIVATION_BLOCK: u64 = 14;
-const LAST_VERIFIED_BLOCK: u64 = DENIM_ACTIVATION_BLOCK + 4;
 const BLOCK_TIMEOUT: Duration = Duration::from_secs(45);
 const REPLAY_QUIET_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[tokio::test]
 async fn cuts_over_builder_and_block_time_at_cobalt() -> Result<()> {
+    verify_cutover(None).await
+}
+
+#[tokio::test]
+async fn denim_keeps_native_builder_and_cobalt_cadence() -> Result<()> {
+    verify_cutover(Some(COBALT_ACTIVATION_BLOCK + 10)).await
+}
+
+async fn verify_cutover(denim_activation_block: Option<u64>) -> Result<()> {
     base_node_runner::test_utils::init_silenced_tracing();
 
-    let system = SystemTestStackBuilder::new()
+    let mut setup = SystemTestStackBuilder::new()
         .with_l1_chain_id(L1_CHAIN_ID)
         .with_l2_chain_id(L2_CHAIN_ID)
         .with_base_cobalt_activation_block(COBALT_ACTIVATION_BLOCK)
-        .with_base_denim_activation_block(DENIM_ACTIVATION_BLOCK)
-        .build()
-        .await?;
+        .with_payload_builder_cutover();
+    if let Some(block) = denim_activation_block {
+        setup = setup.with_base_denim_activation_block(block);
+    }
+    let system = setup.build().await?;
     let builder = system.l2_builder_provider()?;
     let client = system.l2_client_provider()?;
     let signer = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_1.private_key)?;
+    let rollup_config: RollupConfig =
+        serde_json::from_slice(&std::fs::read(system.l2_deployment().rollup_config_path())?)?;
+    let denim_timestamp = rollup_config.upgrade_activation_timestamp(BaseUpgrade::Denim);
+    assert_eq!(denim_timestamp.is_some(), denim_activation_block.is_some());
 
     let pre_cutover_receipt_block =
         send_transaction(&builder, &signer).await.wrap_err("pre-cutover transaction failed")?;
@@ -56,12 +70,56 @@ async fn cuts_over_builder_and_block_time_at_cobalt() -> Result<()> {
         "post-cutover transaction landed at block {post_cutover_receipt_block}"
     );
 
-    wait_for_block(&builder, LAST_VERIFIED_BLOCK).await?;
-    wait_for_block(&client, LAST_VERIFIED_BLOCK).await?;
-    verify_chain_and_cadence(&builder, &client).await?;
+    let mut last_verified_block = post_cutover_receipt_block + 4;
+    if let Some(timestamp) = denim_timestamp {
+        let metrics_url = system.l2_stack().builder().metrics_url()?;
+        let metrics_before = reqwest::get(metrics_url.clone()).await?.text().await?;
+        let flashblocks_builds_before = selected_build_count(&metrics_before, "flashblocks")?;
+        let basic_builds_before = selected_build_count(&metrics_before, "basic")?;
+        assert!(flashblocks_builds_before > 0, "Flashblocks was never selected before Cobalt");
+        assert!(basic_builds_before > 0, "basic builder was never selected after Cobalt");
+
+        // Use the generated schedule rather than assuming the harness's requested block number
+        // still identifies the activation after Cobalt changes the block cadence.
+        let denim_active_head = wait_for_timestamp(&builder, timestamp).await?;
+        let post_denim_receipt_block =
+            send_transaction(&builder, &signer).await.wrap_err("post-Denim transaction failed")?;
+        assert!(
+            post_denim_receipt_block > denim_active_head,
+            "post-Denim transaction landed at block {post_denim_receipt_block}"
+        );
+        last_verified_block = post_denim_receipt_block + 4;
+        wait_for_block(&builder, last_verified_block).await?;
+
+        let metrics_after = reqwest::get(metrics_url).await?.text().await?;
+        assert_eq!(
+            selected_build_count(&metrics_after, "flashblocks")?,
+            flashblocks_builds_before,
+            "Denim restarted Flashblocks builder selection"
+        );
+        assert!(
+            selected_build_count(&metrics_after, "basic")? > basic_builds_before,
+            "basic builder was not selected after Denim"
+        );
+    }
+
+    wait_for_block(&builder, last_verified_block).await?;
+    wait_for_block(&client, last_verified_block).await?;
+    verify_chain_and_cadence(&builder, &client, last_verified_block).await?;
     verify_flashblocks_stop_at_cobalt(&system.l2_stack().builder().flashblocks_url()).await?;
 
     Ok(())
+}
+
+fn selected_build_count(metrics: &str, builder: &str) -> Result<u64> {
+    let label = format!("builder=\"{builder}\"");
+    metrics
+        .lines()
+        .find(|line| line.contains("mux_selected_builds_total") && line.contains(&label))
+        .and_then(|line| line.split_whitespace().last())
+        .ok_or_else(|| eyre::eyre!("missing selected-build metric for {builder}"))?
+        .parse()
+        .wrap_err_with(|| format!("invalid selected-build metric for {builder}"))
 }
 
 async fn send_transaction(provider: &RootProvider<Base>, signer: &PrivateKeySigner) -> Result<u64> {
@@ -107,14 +165,32 @@ async fn wait_for_block(provider: &RootProvider<Base>, target: u64) -> Result<()
     .wrap_err_with(|| format!("timed out waiting for block {target}"))?
 }
 
+async fn wait_for_timestamp(provider: &RootProvider<Base>, timestamp: u64) -> Result<u64> {
+    timeout(BLOCK_TIMEOUT, async {
+        loop {
+            let block = provider
+                .get_block_by_number(BlockNumberOrTag::Latest)
+                .await?
+                .ok_or_eyre("builder block missing")?;
+            if block.header.timestamp >= timestamp {
+                return Ok(block.header.number);
+            }
+            sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .wrap_err_with(|| format!("timed out waiting for timestamp {timestamp}"))?
+}
+
 async fn verify_chain_and_cadence(
     builder: &RootProvider<Base>,
     client: &RootProvider<Base>,
+    last_verified_block: u64,
 ) -> Result<()> {
     let mut previous_hash = None;
     let mut previous_timestamp_ms = None;
 
-    for number in 0..=LAST_VERIFIED_BLOCK {
+    for number in 0..=last_verified_block {
         let builder_block = builder
             .get_block_by_number(BlockNumberOrTag::Number(number))
             .await?
@@ -161,6 +237,10 @@ async fn verify_flashblocks_stop_at_cobalt(url: &str) -> Result<()> {
     }
 
     assert!(!positions.is_empty(), "no pre-Cobalt flashblocks were published");
+    assert!(
+        positions.iter().any(|(number, _)| *number == COBALT_ACTIVATION_BLOCK - 1),
+        "no Flashblocks were published immediately before Cobalt: {positions:?}"
+    );
     assert!(
         positions.iter().all(|(number, _)| *number < COBALT_ACTIVATION_BLOCK),
         "post-Cobalt flashblock published at {positions:?}"

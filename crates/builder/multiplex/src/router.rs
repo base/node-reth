@@ -198,29 +198,6 @@ impl MultiplexRouter {
         let selected_basic = self.basic_selected_at(input.attributes.timestamp());
         self.record_payload_route(payload_id, selected_basic);
 
-        if selected_basic {
-            Self::inc_dispatch_metric(BASIC_BUILDER);
-            Self::inc_selected_build_metric(BASIC_BUILDER);
-            let basic_rx = self.basic_handle.send_new_payload(input);
-            let basic_health = self.basic_health.clone();
-            return async move {
-                let result = basic_rx.await.unwrap_or_else(|_| {
-                    basic_health.mark_unavailable();
-                    Self::set_service_health_metric(BASIC_BUILDER, false);
-                    Err(Self::unavailable_error(BASIC_BUILDER))
-                });
-                info!(
-                    builder = BASIC_BUILDER,
-                    payload_id = ?payload_id,
-                    selected = true,
-                    result = if result.is_ok() { "ok" } else { "err" },
-                    "multiplex build request completed"
-                );
-                let _ = tx.send(result);
-            }
-            .boxed();
-        }
-
         let mut shadow_attributes = input.attributes.clone();
         shadow_attributes.no_tx_pool = true;
         let shadow_input = BuildNewPayload {
@@ -228,16 +205,41 @@ impl MultiplexRouter {
             parent_hash: input.parent_hash,
             resources: Default::default(),
         };
+        let (flashblocks_input, basic_input) =
+            if selected_basic { (shadow_input, input) } else { (input, shadow_input) };
 
         Self::inc_dispatch_metric(FLASHBLOCKS_BUILDER);
         Self::inc_dispatch_metric(BASIC_BUILDER);
 
-        let selected_rx = self.flashblocks_handle.send_new_payload(input);
-        let selected_health = self.flashblocks_health.clone();
-        let selected_builder = FLASHBLOCKS_BUILDER;
-        let shadow_rx = self.basic_handle.send_new_payload(shadow_input);
-        let shadow_health = self.basic_health.clone();
-        let shadow_builder = BASIC_BUILDER;
+        let flashblocks_rx = self.flashblocks_handle.send_new_payload(flashblocks_input);
+        let basic_rx = self.basic_handle.send_new_payload(basic_input);
+
+        let (
+            selected_rx,
+            selected_health,
+            selected_builder,
+            shadow_rx,
+            shadow_health,
+            shadow_builder,
+        ) = if selected_basic {
+            (
+                basic_rx,
+                self.basic_health.clone(),
+                BASIC_BUILDER,
+                flashblocks_rx,
+                self.flashblocks_health.clone(),
+                FLASHBLOCKS_BUILDER,
+            )
+        } else {
+            (
+                flashblocks_rx,
+                self.flashblocks_health.clone(),
+                FLASHBLOCKS_BUILDER,
+                basic_rx,
+                self.basic_health.clone(),
+                BASIC_BUILDER,
+            )
+        };
 
         Self::inc_selected_build_metric(selected_builder);
         async move {
@@ -579,7 +581,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn build_fans_out_before_post_beryl_activation_and_uses_only_basic_after() {
+    async fn build_fans_to_both_and_selects_by_cobalt_activation() {
         for (timestamp, selected_basic) in [(COBALT_TIMESTAMP - 1, false), (COBALT_TIMESTAMP, true)]
         {
             let (mut router, mut flash_rx, mut basic_rx) = test_router();
@@ -589,33 +591,39 @@ mod tests {
             let payload_id = input.payload_id();
             let response = router.handle_build_new_payload(input, tx);
 
+            let flash_cmd = flash_rx.recv().await.expect("flash cmd");
             let basic_cmd = basic_rx.recv().await.expect("basic cmd");
-            if !selected_basic {
-                let flash_cmd = flash_rx.recv().await.expect("flash cmd");
-                let PayloadServiceCommand::BuildNewPayload(input, _, tx) = flash_cmd else {
-                    panic!("expected flash BuildNewPayload");
-                };
+            let mut flash_seen = false;
+            let mut basic_seen = false;
+
+            if let PayloadServiceCommand::BuildNewPayload(input, _, tx) = flash_cmd {
+                flash_seen = true;
                 assert_eq!(input.payload_id() == payload_id, !selected_basic);
                 assert_eq!(input.attributes.no_tx_pool, selected_basic);
                 assert!(input.resources.execution_cache().is_none());
                 assert!(input.resources.state_root_handle().is_none());
-                tx.send(Ok(payload_id)).expect("flash response");
-            } else {
-                assert!(flash_rx.try_recv().is_err());
+                tx.send(if selected_basic {
+                    Err(PayloadBuilderError::MissingPayload)
+                } else {
+                    Ok(payload_id)
+                })
+                .expect("flash response");
             }
 
-            let PayloadServiceCommand::BuildNewPayload(input, _, tx) = basic_cmd else {
-                panic!("expected basic BuildNewPayload");
-            };
-            assert_eq!(input.payload_id() == payload_id, selected_basic);
-            assert_eq!(input.attributes.no_tx_pool, !selected_basic);
-            tx.send(if selected_basic {
-                Ok(payload_id)
-            } else {
-                Err(PayloadBuilderError::MissingPayload)
-            })
-            .expect("basic response");
+            if let PayloadServiceCommand::BuildNewPayload(input, _, tx) = basic_cmd {
+                basic_seen = true;
+                assert_eq!(input.payload_id() == payload_id, selected_basic);
+                assert_eq!(input.attributes.no_tx_pool, !selected_basic);
+                tx.send(if selected_basic {
+                    Ok(payload_id)
+                } else {
+                    Err(PayloadBuilderError::MissingPayload)
+                })
+                .expect("basic response");
+            }
 
+            assert!(flash_seen);
+            assert!(basic_seen);
             response.await;
             assert!(rx.await.expect("selected response").is_ok());
         }
@@ -656,10 +664,10 @@ mod tests {
         RuntimeUpgradeRegistry::clear_chain(CHAIN_ID);
     }
 
-    #[tokio::test]
-    async fn post_beryl_builds_never_dispatch_to_flashblocks() {
+    #[test]
+    fn any_post_beryl_upgrade_selects_basic() {
         for upgrade in [BaseUpgrade::Cobalt, BaseUpgrade::Denim, BaseUpgrade::Zenith] {
-            let (mut router, mut flash_rx, mut basic_rx) = test_router();
+            let (mut router, _, _) = test_router();
             router.chain_spec = Arc::new(
                 BaseChainSpecBuilder::base_mainnet()
                     .with_fork(BaseUpgrade::Cobalt, ForkCondition::Never)
@@ -668,22 +676,9 @@ mod tests {
                     .with_fork(upgrade, ForkCondition::Timestamp(10))
                     .build(),
             );
-            let input = sample_input(10);
-            let payload_id = input.payload_id();
-            let (tx, rx) = tokio::sync::oneshot::channel();
-            let response = router.handle_build_new_payload(input, tx);
-
-            assert!(flash_rx.try_recv().is_err(), "Flashblocks received work at {upgrade:?}");
-            let PayloadServiceCommand::BuildNewPayload(input, _, tx) =
-                basic_rx.try_recv().expect("native build command")
-            else {
-                panic!("expected native BuildNewPayload");
-            };
-            assert_eq!(input.payload_id(), payload_id);
-            assert!(!input.attributes.no_tx_pool);
-            tx.send(Ok(payload_id)).expect("native response");
-            response.await;
-            assert_eq!(rx.await.expect("selected response").expect("successful build"), payload_id);
+            assert!(!router.basic_selected_at(9));
+            assert!(router.basic_selected_at(10));
+            assert!(router.basic_selected_at(11));
         }
     }
 
@@ -693,6 +688,12 @@ mod tests {
         let (tx, rx) = tokio::sync::oneshot::channel();
         let response = router.handle_build_new_payload(sample_input(COBALT_TIMESTAMP), tx);
 
+        let PayloadServiceCommand::BuildNewPayload(input, _, tx) =
+            flash_rx.recv().await.expect("flash shadow command")
+        else {
+            panic!("expected flash BuildNewPayload");
+        };
+        tx.send(Ok(input.payload_id())).expect("flash shadow response");
         let PayloadServiceCommand::BuildNewPayload(_, _, tx) =
             basic_rx.recv().await.expect("native build command")
         else {
@@ -820,6 +821,10 @@ mod tests {
         let build_rx = handle.send_new_payload(input);
         let resolve = handle.resolve_kind(payload_id, PayloadKind::Earliest);
 
+        let flash_cmd = flash_rx.recv().await.expect("flash build command");
+        let PayloadServiceCommand::BuildNewPayload(_, _, flash_build_tx) = flash_cmd else {
+            panic!("expected flash BuildNewPayload command");
+        };
         let basic_cmd = basic_rx.recv().await.expect("basic build command");
         let PayloadServiceCommand::BuildNewPayload(_, _, basic_build_tx) = basic_cmd else {
             panic!("expected basic BuildNewPayload command");
@@ -836,6 +841,7 @@ mod tests {
         assert!(flash_rx.try_recv().is_err());
 
         basic_build_tx.send(Ok(payload_id)).expect("basic build response");
+        flash_build_tx.send(Ok(payload_id)).expect("flash build response");
         assert!(basic_resolve_tx.send(None).is_ok(), "basic resolve response");
 
         assert_eq!(
@@ -850,7 +856,8 @@ mod tests {
 
     #[tokio::test]
     async fn stalled_shadow_does_not_block_selected_builder() {
-        for timestamp in [COBALT_TIMESTAMP - 2, COBALT_TIMESTAMP - 1] {
+        for (timestamp, selected_basic) in [(COBALT_TIMESTAMP - 1, false), (COBALT_TIMESTAMP, true)]
+        {
             let (router, mut flash_rx, mut basic_rx) = test_router();
             let (router_tx, router_rx) = mpsc::unbounded_channel();
             let handle = PayloadBuilderHandle::new(router_tx);
@@ -867,7 +874,9 @@ mod tests {
             let PayloadServiceCommand::BuildNewPayload(_, _, basic_tx) = basic_cmd else {
                 panic!("expected basic BuildNewPayload command");
             };
-            flash_tx.send(Ok(payload_id)).expect("selected build response");
+            let (selected_tx, stalled_tx) =
+                if selected_basic { (basic_tx, flash_tx) } else { (flash_tx, basic_tx) };
+            selected_tx.send(Ok(payload_id)).expect("selected build response");
 
             let result = tokio::time::timeout(Duration::from_secs(1), build_rx)
                 .await
@@ -876,7 +885,7 @@ mod tests {
                 .expect("successful selected response");
             assert_eq!(result, payload_id);
 
-            drop(basic_tx);
+            drop(stalled_tx);
             drop(handle);
             router_task.await.expect("router task");
         }
