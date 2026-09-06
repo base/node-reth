@@ -362,10 +362,10 @@ services:
     restart: unless-stopped
 
   base-batcher:
-    image: base-batcher:local
+    image: op-batcher:local
     build:
-      <<: *rust-service-build
-      target: batcher
+      context: ../..
+      dockerfile: etc/docker/Dockerfile.op-batcher
     container_name: base-batcher
     depends_on:
       base-builder:
@@ -373,22 +373,30 @@ services:
     ports:
       - "${BATCHER_METRICS_PORT}:${BATCHER_METRICS_PORT}"   # Metrics
     command:
-      - --l1-rpc-url
+      - --l1-eth-rpc
       - http://l1-el:${L1_HTTP_PORT}
-      - --l2-rpc-url
+      - --l2-eth-rpc
       - http://base-builder:${L2_BUILDER_HTTP_PORT}
-      - --rollup-rpc-url
+      - --rollup-rpc
       - http://base-builder:${L2_BUILDER_CL_RPC_PORT}
       - --private-key
       - ${BATCHER_KEY}
+      - --batch-type=0
+      - --data-availability-type=blobs
+      - --compression-algo=brotli
+      - --compressor=shadow
       - --max-channel-duration
       - "2"
       - --poll-interval
-      - "1"
+      - "1s"
       - --sub-safety-margin
       - "0"
       - --num-confirmations
       - "1"
+      - --max-pending-tx=1
+      - --target-num-frames=1
+      # Devnet L1 has Fusaka active at genesis; chain 1337 is not auto-detected.
+      - --txmgr.cell-proof-time=0
       - --metrics.enabled
       - --metrics.addr
       - "0.0.0.0"

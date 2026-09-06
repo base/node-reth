@@ -15,11 +15,11 @@ variable "ZK_HOST_PROFILE" {
 }
 
 variable "DEVNET_TARGETS" {
-  default = ["base", "batcher"]
+  default = ["base", "op-batcher"]
 }
 
 variable "INGRESS_TARGETS" {
-  default = ["base", "batcher", "ingress-rpc", "audit-archiver"]
+  default = ["base", "op-batcher", "ingress-rpc", "audit-archiver"]
 }
 
 group "default" {
@@ -174,6 +174,12 @@ target "batcher" {
     SCCACHE_CACHE_ID = "rust-services-batcher-sccache"
   }
   tags = ["base-batcher:local"]
+}
+
+target "op-batcher" {
+  context = "."
+  dockerfile = "etc/docker/Dockerfile.op-batcher"
+  tags = ["op-batcher:local"]
 }
 
 target "sidecrush" {

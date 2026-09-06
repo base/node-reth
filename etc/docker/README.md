@@ -10,6 +10,12 @@ The public operator image (`ghcr.io/base/node`) is the `base` target in `Dockerf
 
 `Dockerfile.devnet` builds a utility image containing genesis generation tools (`eth-genesis-state-generator`, `eth2-val-tools`, `op-deployer`) and setup scripts. This image bootstraps L1 and L2 chain configurations for local development.
 
+`Dockerfile.op-batcher` builds Go `op-batcher/v1.16.5` at commit
+[`abe047af`](https://github.com/ethereum-optimism/optimism/commit/abe047afc995e0e22abf5ea9b157e267e907d494),
+matching the Base mainnet infrastructure source pin. The `devnet` and `ingress`
+Bake groups build it as `op-batcher:local`; the separate Rust `batcher` target
+remains available as `base-batcher:local`.
+
 `Dockerfile.nitro-enclave` and `Dockerfile.proxyd` remain separate because they have different toolchains and runtime requirements.
 
 ## Docker Compose
@@ -18,9 +24,25 @@ The `docker-compose.yml` orchestrates a complete local devnet environment with b
 
 - An L1 execution client (Reth) and consensus client (Lighthouse) with a validator
 - Unified Base sequencer and validator/RPC nodes on L2
-- The `base-batcher` for submitting L2 data to L1
+- Go `op-batcher` for submitting L2 data to L1 (service name `base-batcher`)
 
 All services read configuration from `devnet-env` in this directory. The devnet stores chain data in `.devnet/` which is created on first run.
+
+Both single-sequencer and HA devnets explicitly use SingularBatch
+(`--batch-type=0`, Base's SingleBatch format), blob DA, and Brotli compression.
+They retain local low-latency submission settings, not mainnet's runtime config.
+`--txmgr.cell-proof-time=0` enables Fusaka cell proofs from genesis for the
+local L1 (chain ID 1337), which this version does not auto-detect. The Anvil
+variant inherits these batcher settings. Prometheus keeps the `batcher` job
+and `base-batcher:6060` target; Grafana uses `op_batcher_default_*` metrics.
+
+**Validity transaction limitation:** this exact op-batcher pin embeds op-geth
+`v1.101609.2-rc.1`, whose typed block decoder does not support Base's EIP-8130
+transaction type `0x79`. A block containing one prevents batching from advancing
+past that block (`transaction type not supported`). The Cobalt/Denim schedule
+and experimental validity flags remain unchanged, but validity-transaction
+tests need a batcher with `0x79` support; this switch only provides mainnet
+source-version parity, not full Cobalt transaction compatibility.
 
 `docker-compose.prover.yml` is a separate standalone stack that runs the prover
 trio (Postgres, `base-prover-service`, `base-prover-zk-host`) against
