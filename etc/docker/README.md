@@ -161,6 +161,3 @@ Plain `docker build` still works if you prefer it:
 ```bash
 docker build -t base -f etc/docker/Dockerfile.rust-services --target base .
 ```
-
-L2 startup waits for Lighthouse’s `/eth/v1/beacon/genesis` endpoint to return HTTP
-200 before starting the bootnode. The Anvil variant uses its combined L1 endpoint.
