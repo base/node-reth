@@ -117,16 +117,24 @@ impl Default for ResourceMeteringConfig {
 
 impl ResourceMeteringConfig {
     /// Builds a shared config from startup flags.
+    ///
+    /// Enabling metering without a non-empty schedule file fails closed so
+    /// operators cannot boot with `--enable-metering` and silently admit every
+    /// transaction.
     pub fn from_parts(
         enabled: bool,
         schedule_path: Option<&Path>,
         provider: SharedMeteringProvider,
     ) -> Result<Self, ResourceMeteringError> {
         let schedule = if enabled {
-            match schedule_path {
-                Some(path) => ResourceMeteringSchedule::from_file(path)?,
-                None => ResourceMeteringSchedule::default(),
+            let Some(path) = schedule_path else {
+                return Err(ResourceMeteringError::MissingSchedule);
+            };
+            let schedule = ResourceMeteringSchedule::from_file(path)?;
+            if schedule.is_empty() {
+                return Err(ResourceMeteringError::EmptySchedule);
             }
+            schedule
         } else {
             if let Some(path) = schedule_path {
                 warn!(
@@ -452,6 +460,28 @@ mod tests {
         assert!(!config.enabled);
         assert!(config.schedule.is_empty());
         assert!(!config.is_active());
+    }
+
+    #[test]
+    fn enabled_metering_without_schedule_fails_closed() {
+        let err = ResourceMeteringConfig::from_parts(true, None, Arc::new(NoopMeteringProvider))
+            .expect_err("enable-metering without a schedule must fail");
+        assert!(matches!(err, ResourceMeteringError::MissingSchedule));
+    }
+
+    #[test]
+    fn enabled_metering_with_empty_schedule_fails_closed() {
+        let path = std::env::temp_dir()
+            .join(format!("resource-metering-empty-schedule-{}.json", std::process::id()));
+        std::fs::write(&path, r#"{"version":1,"dimensions":[]}"#)
+            .expect("write empty schedule fixture");
+        let err = ResourceMeteringConfig::from_parts(
+            true,
+            Some(path.as_path()),
+            Arc::new(NoopMeteringProvider),
+        );
+        let _ = std::fs::remove_file(&path);
+        assert!(matches!(err, Err(ResourceMeteringError::EmptySchedule)));
     }
 
     fn compiled_cpu_schedule() -> ResourceMeteringSchedule {
