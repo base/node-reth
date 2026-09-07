@@ -15,11 +15,11 @@ variable "ZK_HOST_PROFILE" {
 }
 
 variable "DEVNET_TARGETS" {
-  default = ["base", "batcher"]
+  default = ["base"]
 }
 
 variable "INGRESS_TARGETS" {
-  default = ["base", "batcher", "ingress-rpc", "audit-archiver"]
+  default = ["base", "ingress-rpc", "audit-archiver"]
 }
 
 group "default" {
@@ -38,7 +38,6 @@ group "rust-services" {
     "websocket-proxy",
     "ingress-rpc",
     "audit-archiver",
-    "batcher",
     "sidecrush",
     "prover-service",
     "zk-host",
@@ -164,16 +163,6 @@ target "audit-archiver" {
     SCCACHE_CACHE_ID = "rust-services-audit-archiver-sccache"
   }
   tags = ["audit-archiver:local"]
-}
-
-target "batcher" {
-  inherits = ["_rust-service-common"]
-  target = "batcher"
-  args = {
-    CARGO_CHEF_ARGS = "--package base-batcher-bin"
-    SCCACHE_CACHE_ID = "rust-services-batcher-sccache"
-  }
-  tags = ["base-batcher:local"]
 }
 
 target "sidecrush" {

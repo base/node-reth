@@ -2,6 +2,27 @@
 
 Unified Base node binary.
 
+## `base batcher`
+
+`base batcher` submits L2 batch data to L1. It uses the shared logging and metrics
+flags and `BASE_NODE_LOG_*` / `BASE_NODE_METRICS_*` variables (metrics port: 9090).
+L1 RPC uses `--l1-eth-rpc` / `BASE_NODE_L1_ETH_RPC`, matching the node commands;
+`--l1-rpc-url` remains an alias. Other batcher settings use `BASE_BATCHER_*`,
+including `BASE_BATCHER_PRIVATE_KEY` and `BASE_BATCHER_ROLLUP_RPC_URL`.
+
+An explicit `--chain` / `BASE_CHAIN` uses the same built-in, TOML, and
+`BASE_CHAIN_*` override resolution as the node commands. The batcher checks the
+rollup config and RPC chain IDs against that selection before starting. Without
+an explicit selection, it discovers chain configuration from its RPC endpoints.
+It always gets the batch inbox and fork configuration from the rollup RPC.
+
+```text
+base --chain sepolia batcher --l1-eth-rpc <url> --l2-rpc-url <url> --rollup-rpc-url <url> --private-key <key>
+```
+
+The former standalone binary's `BATCHER_*` environment variables are replaced by
+these shared or `BASE_BATCHER_*` names.
+
 ## `base rpc`
 
 `base rpc` starts a validator-oriented node by launching an embedded execution node and an embedded

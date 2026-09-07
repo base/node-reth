@@ -362,10 +362,11 @@ services:
     restart: unless-stopped
 
   base-batcher:
-    image: base-batcher:local
+    image: base:local
     build:
       <<: *rust-service-build
-      target: batcher
+      target: base
+    entrypoint: /app/base
     container_name: base-batcher
     depends_on:
       base-builder:
@@ -373,7 +374,8 @@ services:
     ports:
       - "${BATCHER_METRICS_PORT}:${BATCHER_METRICS_PORT}"   # Metrics
     command:
-      - --l1-rpc-url
+      - batcher
+      - --l1-eth-rpc
       - http://l1-el:${L1_HTTP_PORT}
       - --l2-rpc-url
       - http://base-builder:${L2_BUILDER_HTTP_PORT}
