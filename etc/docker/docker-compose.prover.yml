@@ -15,6 +15,12 @@
 #
 # See docs/guides/STANDALONE_PROVING.md for the full proving workflow.
 
+x-healthcheck-defaults: &healthcheck-defaults
+  interval: 250ms
+  timeout: 1s
+  retries: 240
+  start_period: 250ms
+
 services:
   prover-service-postgres:
     image: postgres:17-alpine
@@ -28,10 +34,7 @@ services:
       - ../../crates/proof/prover-service/db/migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U prover -d prover"]
-      interval: 250ms
-      timeout: 1s
-      retries: 240
-      start_period: 250ms
+      <<: *healthcheck-defaults
     restart: unless-stopped
 
   base-prover-service:
@@ -57,10 +60,7 @@ services:
       - OTEL_SERVICE_NAME=base-prover-service
     healthcheck:
       test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/9000"]
-      interval: 250ms
-      timeout: 1s
-      retries: 240
-      start_period: 250ms
+      <<: *healthcheck-defaults
     restart: unless-stopped
 
   base-prover-zk-host:
