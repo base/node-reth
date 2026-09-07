@@ -20,6 +20,7 @@ x-healthcheck-defaults: &healthcheck-defaults
   timeout: 1s
   retries: 240
   start_period: 250ms
+  start_interval: 250ms
 
 services:
   prover-service-postgres:
