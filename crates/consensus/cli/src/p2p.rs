@@ -649,14 +649,14 @@ impl P2PArgs {
         // If the advertise ip is set, we will disable the dynamic ENR updates.
         let static_ip = self.advertise_ip.is_some();
 
-        // If the advertise tcp port is null, use the listen tcp port
+        // If an advertised port is unset or zero, use the corresponding listen port.
         let advertise_tcp_port = match self.advertise_tcp_port {
-            None => self.listen_tcp_port,
+            None | Some(0) => self.listen_tcp_port,
             Some(port) => port,
         };
 
         let advertise_udp_port = match self.advertise_udp_port {
-            None => self.listen_udp_port,
+            None | Some(0) => self.listen_udp_port,
             Some(port) => port,
         };
 
@@ -1249,6 +1249,43 @@ mod tests {
         let err = err.to_string();
         assert!(err.contains("502"), "unexpected error: {err}");
         mock.assert_calls_async(2).await;
+    }
+
+    #[tokio::test]
+    async fn test_p2p_config_advertised_ports() {
+        for (tcp, udp, expected_tcp, expected_udp) in [
+            (None, None, 9222, 9223),
+            (Some("0"), Some("0"), 9222, 9223),
+            (Some("9333"), Some("9444"), 9333, 9444),
+            (Some("0"), Some("9444"), 9222, 9444),
+            (Some("9333"), Some("0"), 9333, 9223),
+        ] {
+            let mut cli_args = vec![
+                "test",
+                "--p2p.listen.tcp",
+                "9222",
+                "--p2p.listen.udp",
+                "9223",
+                "--p2p.advertise.ip",
+                "192.0.2.1",
+            ];
+            if let Some(port) = tcp {
+                cli_args.extend(["--p2p.advertise.tcp", port]);
+            }
+            if let Some(port) = udp {
+                cli_args.extend(["--p2p.advertise.udp", port]);
+            }
+            let args = MockCommand::parse_from(cli_args);
+            let config = args
+                .p2p
+                .config(&RollupConfig::default(), 8453, None, L1_RPC_TIMEOUT, Some(Address::ZERO))
+                .await
+                .unwrap();
+            let enr = config.discovery_address.build_enr(8453).unwrap();
+
+            assert_eq!(enr.tcp4(), Some(expected_tcp), "advertised TCP: {tcp:?}, UDP: {udp:?}");
+            assert_eq!(enr.udp4(), Some(expected_udp), "advertised TCP: {tcp:?}, UDP: {udp:?}");
+        }
     }
 
     #[tokio::test]
