@@ -375,7 +375,7 @@ services:
       - "${BATCHER_METRICS_PORT}:${BATCHER_METRICS_PORT}"   # Metrics
     command:
       - batcher
-      - --l1-eth-rpc
+      - --l1-rpc-url
       - http://l1-el:${L1_HTTP_PORT}
       - --l2-rpc-url
       - http://base-builder:${L2_BUILDER_HTTP_PORT}

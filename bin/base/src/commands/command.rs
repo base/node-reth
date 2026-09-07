@@ -1,6 +1,6 @@
 //! Top-level command dispatch for the unified Base binary.
 
-use base_batcher_cli::{BatcherArgs, BatcherChainIds};
+use base_batcher_cli::BatcherArgs;
 use base_cli_utils::RuntimeManager;
 use base_execution_cli::{chainspec::BaseChainSpecParser, commands::base_proofs};
 use base_node_core::BaseNode;
@@ -53,14 +53,8 @@ impl BaseCommand {
     ) -> eyre::Result<()> {
         match self {
             Self::Batcher(batcher) => {
-                let expected_chain = if chain_resolver.chain_explicitly_set {
-                    let chain = chain_resolver.resolve()?;
-                    Some(BatcherChainIds { l1: chain.l1_chain_id, l2: chain.l2_chain_id })
-                } else {
-                    None
-                };
-                RuntimeManager::new()
-                    .run_until_ctrl_c((*batcher).exec(metrics_enabled, expected_chain))
+                chain_resolver.reject_for_reth_command("base batcher")?;
+                RuntimeManager::new().run_until_ctrl_c((*batcher).exec(metrics_enabled))
             }
             Self::Bootnode(bootnode) => (*bootnode).run(chain_resolver.resolve()?, metrics_enabled),
             Self::Rpc(rpc) => (*rpc).run(chain_resolver.resolve()?, metrics_enabled),

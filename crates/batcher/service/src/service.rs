@@ -472,9 +472,6 @@ impl BatcherService {
                 })
             })
             .await?;
-        if let Some(expected) = self.config.expected_chain {
-            expected.validate(rollup_config.l1_chain_id, rollup_config.l2_chain_id.id())?;
-        }
         let rollup_config = Arc::new(rollup_config);
         let effective_batch_inbox =
             self.config.batch_inbox_override.unwrap_or(rollup_config.batch_inbox_address);
@@ -520,16 +517,6 @@ impl BatcherService {
             })
         })
         .await?;
-
-        let l1_chain_id =
-            Self::rpc_retry("l1-chain-id", retry, rpc_timeout, || l1_provider.get_chain_id())
-                .await?;
-        if let Some(expected) = self.config.expected_chain {
-            let l2_chain_id =
-                Self::rpc_retry("l2-chain-id", retry, rpc_timeout, || l2_provider.get_chain_id())
-                    .await?;
-            expected.validate(l1_chain_id, l2_chain_id)?;
-        }
 
         // Recent transactions only select an L1 synchronization target.
         // They never advance the L2 backfill cursor.
@@ -680,7 +667,10 @@ impl BatcherService {
             self.config.poll_interval,
         );
 
-        // Construct the tx manager using the validated L1 chain ID.
+        // Fetch L1 chain ID and construct the tx manager.
+        let l1_chain_id =
+            Self::rpc_retry("l1-chain-id", retry, rpc_timeout, || l1_provider.get_chain_id())
+                .await?;
         let drain_timeout = self.config.tx_manager.resubmission_timeout * 2;
         let tx_manager = SimpleTxManager::new(
             l1_provider,

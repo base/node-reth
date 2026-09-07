@@ -7,7 +7,7 @@ use std::{
 
 use alloy_primitives::Address;
 use base_batcher_core::ThrottleConfig;
-use base_batcher_service::{BatcherChainIds, BatcherConfig, BatcherService};
+use base_batcher_service::{BatcherConfig, BatcherService};
 use base_cli_utils::RuntimeManager;
 use base_runtime::TokioRuntime;
 use base_tx_manager::{SignerConfig, TxManagerConfig};
@@ -25,13 +25,13 @@ pub struct BatcherArgs {
     /// Accepts a comma-separated list. The service connects to each in order at
     /// startup and uses the first that responds; later endpoints serve as
     /// startup-time fallbacks only (no per-call rotation).
-    #[arg(long = "l1-eth-rpc", visible_aliases = ["l1", "l1-rpc-url"], env = "BASE_NODE_L1_ETH_RPC", value_delimiter = ',', num_args = 1..)]
+    #[arg(long = "l1-rpc-url", visible_aliases = ["l1", "l1-eth-rpc"], env = "BASE_NODE_L1_ETH_RPC", value_delimiter = ',', num_args = 1..)]
     pub l1_rpc_url: Vec<Url>,
 
     /// L2 HTTP RPC endpoint(s) (used for all JSON-RPC calls including throttle control).
     ///
     /// Accepts a comma-separated list with the same connection-time failover
-    /// semantics as `--l1-eth-rpc`.
+    /// semantics as `--l1-rpc-url`.
     #[arg(long = "l2-rpc-url", env = "BASE_BATCHER_L2_RPC_URL", value_delimiter = ',', num_args = 1..)]
     pub l2_rpc_url: Vec<Url>,
 
@@ -54,7 +54,7 @@ pub struct BatcherArgs {
     /// Rollup node RPC endpoint(s).
     ///
     /// Accepts a comma-separated list with the same connection-time failover
-    /// semantics as `--l1-eth-rpc`.
+    /// semantics as `--l1-rpc-url`.
     #[arg(
         long = "rollup-rpc-url",
         env = "BASE_BATCHER_ROLLUP_RPC_URL",
@@ -307,7 +307,6 @@ impl BatcherArgs {
         };
         tx_manager.validate()?;
         Ok(BatcherConfig {
-            expected_chain: None,
             l1_rpc_url: self.l1_rpc_url,
             l1_ws_url: self.l1_ws_url,
             l2_rpc_url: self.l2_rpc_url,
@@ -339,13 +338,8 @@ impl BatcherArgs {
     }
 
     /// Execute the batcher.
-    pub async fn exec(
-        self,
-        metrics_enabled: bool,
-        expected_chain: Option<BatcherChainIds>,
-    ) -> eyre::Result<()> {
-        let mut config = self.into_config(metrics_enabled)?;
-        config.expected_chain = expected_chain;
+    pub async fn exec(self, metrics_enabled: bool) -> eyre::Result<()> {
+        let config = self.into_config(metrics_enabled)?;
         info!(
             l1_rpc_count = config.l1_rpc_url.len(),
             l2_rpc_count = config.l2_rpc_url.len(),

@@ -2,5 +2,3 @@
 
 mod cli;
 pub use cli::{BatcherArgs, SignerCli};
-
-pub use base_batcher_service::BatcherChainIds;

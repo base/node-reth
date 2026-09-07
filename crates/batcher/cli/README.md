@@ -8,9 +8,9 @@ CLI argument parsing and signal handling.
 Logging and metrics use the shared `base` flags and `BASE_NODE_LOG_*` /
 `BASE_NODE_METRICS_*` environment variables.
 
-L1 RPC uses `--l1-eth-rpc` / `BASE_NODE_L1_ETH_RPC`. The unified `--chain` /
-`BASE_CHAIN` selection optionally checks RPC chain identity; chain details and the
-batch inbox are still fetched from the rollup RPC.
+L1 RPC uses `--l1-rpc-url` / `BASE_NODE_L1_ETH_RPC`. Top-level `--chain` /
+`BASE_CHAIN` selection is rejected. Chain details and the batch inbox are fetched
+from the rollup RPC.
 
 ## Configuration
 

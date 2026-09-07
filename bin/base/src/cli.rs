@@ -1,7 +1,6 @@
 use base_cli_utils::{LogConfig, MetricsConfig};
 use clap::Parser;
 use eyre::WrapErr;
-use tracing::info;
 
 use crate::{
     commands::BaseCommand,
@@ -48,8 +47,6 @@ impl BaseCli {
         LogConfig::from(self.logging)
             .init_tracing_subscriber()
             .wrap_err("failed to initialize tracing")?;
-
-        info!(version = env!("CARGO_PKG_VERSION"), "Starting Base");
 
         let metrics_enabled = self.metrics.enabled;
         MetricsConfig::from(self.metrics)
@@ -118,7 +115,7 @@ mod tests {
     }
 
     #[test]
-    fn batcher_uses_shared_l1_rpc_and_accepts_legacy_flag() {
+    fn batcher_uses_l1_rpc_url_and_accepts_aliases() {
         for flag in ["--l1-eth-rpc", "--l1-rpc-url", "--l1"] {
             let cli = BaseCli::try_parse_from(["base", "batcher", flag, "http://localhost:8545"])
                 .unwrap();
@@ -130,7 +127,7 @@ mod tests {
         let command = BaseCli::command();
         let batcher = command.find_subcommand("batcher").unwrap();
         for (flag, env) in [
-            ("l1-eth-rpc", "BASE_NODE_L1_ETH_RPC"),
+            ("l1-rpc-url", "BASE_NODE_L1_ETH_RPC"),
             ("private-key", "BASE_BATCHER_PRIVATE_KEY"),
             ("rollup-rpc-url", "BASE_BATCHER_ROLLUP_RPC_URL"),
         ] {
@@ -140,11 +137,10 @@ mod tests {
     }
 
     #[test]
-    fn batcher_resolves_shared_chain_selection() {
+    fn batcher_rejects_top_level_chain_selection() {
         let cli = BaseCli::try_parse_from(["base", "--chain", "sepolia", "batcher"]).unwrap();
-        let expected = ChainResolver::new(cli.chain).resolve().unwrap();
-        assert_eq!(expected.l1_chain_id, 11155111);
-        assert_eq!(expected.l2_chain_id, 84532);
+        let error = cli.command.run(ChainResolver::new(cli.chain), false).unwrap_err();
+        assert!(error.to_string().contains("`base batcher` manages its own chain configuration"));
     }
 
     #[test]

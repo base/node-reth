@@ -8,8 +8,6 @@ use base_batcher_encoder::EncoderConfig;
 use base_tx_manager::{SignerConfig, TxManagerConfig};
 use url::Url;
 
-use crate::BatcherChainIds;
-
 /// Full batcher configuration combining RPC endpoints, identity, encoding
 /// parameters, submission limits, and optional throttling.
 ///
@@ -18,8 +16,6 @@ use crate::BatcherChainIds;
 /// [`batch_inbox_override`](Self::batch_inbox_override) to submit to a non-canonical inbox.
 #[derive(Debug, Clone)]
 pub struct BatcherConfig {
-    /// Expected chain IDs from an explicit CLI chain selection; otherwise discovered from RPC.
-    pub expected_chain: Option<BatcherChainIds>,
     /// L1 RPC endpoint(s).
     ///
     /// One or more HTTP/HTTPS URLs. The service connects to each in order at
@@ -119,7 +115,6 @@ pub struct BatcherConfig {
 impl Default for BatcherConfig {
     fn default() -> Self {
         Self {
-            expected_chain: None,
             l1_rpc_url: vec!["http://localhost:8545".parse().expect("valid default URL")],
             l1_ws_url: None,
             l2_rpc_url: vec!["http://localhost:9545".parse().expect("valid default URL")],
