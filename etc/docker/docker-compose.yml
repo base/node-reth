@@ -5,12 +5,16 @@ x-rust-service-build: &rust-service-build
     PROFILE: "${CARGO_PROFILE:-dev}"
     BASE_SUCCINCT_ELF_REQUIRE: "${BASE_SUCCINCT_ELF_REQUIRE:-0}"
 
-x-node-healthcheck: &node-healthcheck
-  test: ["CMD-SHELL", "curl -sf -H 'Content-Type: application/json' --data '{\"jsonrpc\":\"2.0\",\"method\":\"eth_chainId\",\"params\":[],\"id\":1}' \"http://localhost:$${NODE_HEALTHCHECK_HTTP_PORT}/\" >/dev/null && curl -sf \"http://localhost:$${NODE_HEALTHCHECK_CL_RPC_PORT}/healthz\" >/dev/null"]
+x-healthcheck-defaults: &healthcheck-defaults
   interval: 250ms
   timeout: 1s
   retries: 240
   start_period: 250ms
+  start_interval: 250ms
+
+x-node-healthcheck: &node-healthcheck
+  test: ["CMD-SHELL", "curl -sf -H 'Content-Type: application/json' --data '{\"jsonrpc\":\"2.0\",\"method\":\"eth_chainId\",\"params\":[],\"id\":1}' \"http://localhost:$${NODE_HEALTHCHECK_HTTP_PORT}/\" >/dev/null && curl -sf \"http://localhost:$${NODE_HEALTHCHECK_CL_RPC_PORT}/healthz\" >/dev/null"]
+  <<: *healthcheck-defaults
 
 services:
   setup-l1:
@@ -71,10 +75,7 @@ services:
       - -vvv
     healthcheck:
       test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/${L1_HTTP_PORT}"]
-      interval: 250ms
-      timeout: 1s
-      retries: 240
-      start_period: 250ms
+      <<: *healthcheck-defaults
     restart: unless-stopped
 
   l1-cl:
@@ -115,11 +116,18 @@ services:
       - --prepare-payload-lookahead=8000
       - --suggested-fee-recipient=${FEE_RECIPIENT}
     healthcheck:
-      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/${L1_CL_HTTP_PORT}"]
-      interval: 250ms
-      timeout: 1s
-      retries: 240
-      start_period: 250ms
+      # L2 initialization immediately requests beacon genesis; a listening port
+      # alone does not guarantee that this endpoint is ready.
+      test:
+        - CMD
+        - bash
+        - -ec
+        - |
+          exec 3<>/dev/tcp/localhost/${L1_CL_HTTP_PORT}
+          printf 'GET /eth/v1/beacon/genesis HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3
+          read -r protocol status rest <&3
+          [[ "$$status" == 200 ]]
+      <<: *healthcheck-defaults
     restart: unless-stopped
 
   l1-vc:
@@ -188,7 +196,12 @@ services:
       <<: *rust-service-build
       target: base
     container_name: base-bootnode
+    # Gate L2 startup on the L1 execution and beacon APIs.
     depends_on:
+      l1-el:
+        condition: service_healthy
+      l1-cl:
+        condition: service_healthy
       setup-l2:
         condition: service_completed_successfully
     ports:
@@ -231,10 +244,7 @@ services:
         ipv4_address: ${L2_EL_BOOTNODE_ADVERTISE_IP}
     healthcheck:
       test: ["CMD", "test", "-s", "${L2_CL_BOOTNODE_ENR_PATH}"]
-      interval: 250ms
-      timeout: 1s
-      retries: 240
-      start_period: 250ms
+      <<: *healthcheck-defaults
     restart: unless-stopped
 
   base-builder:

@@ -135,3 +135,13 @@ Plain `docker build` still works if you prefer it:
 ```bash
 docker build -t base -f etc/docker/Dockerfile.rust-services --target base .
 ```
+
+### Startup readiness
+
+Devnet health checks use `start_interval: 250ms` for frequent probes during the
+startup grace period. L2 bootnode startup waits for the L1 execution client and
+Lighthouse to be healthy. Lighthouse readiness requires an HTTP 200 response from
+`/eth/v1/beacon/genesis`, which L2 initialization requests immediately; a listening
+TCP port alone does not establish that the endpoint is ready. Other L2 nodes wait
+for the bootnode. The Anvil variant uses its combined execution/beacon endpoint
+and does not depend on the disabled Lighthouse services.

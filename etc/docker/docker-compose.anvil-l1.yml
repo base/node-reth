@@ -1,3 +1,10 @@
+x-healthcheck-defaults: &healthcheck-defaults
+  interval: 250ms
+  timeout: 1s
+  retries: 240
+  start_period: 250ms
+  start_interval: 250ms
+
 services:
   # Reuse the l1-el service name so setup-l2 keeps its existing dependency and
   # all execution RPC callers share one endpoint. This Anvil also serves the
@@ -17,6 +24,14 @@ services:
       - "${L1_CL_HTTP_PORT}:${L1_HTTP_PORT}"
     volumes: !override
       - ../../.devnet/l1/configs:/genesis:ro
+
+  # Anvil serves the beacon API itself; Lighthouse is disabled in this variant.
+  base-bootnode:
+    depends_on: !override
+      setup-l2:
+        condition: service_completed_successfully
+      l1-el:
+        condition: service_healthy
 
   # These services remain available in the normal devnet but are omitted from
   # the single-Anvil variant unless explicitly enabled.
@@ -80,10 +95,7 @@ services:
           -vvv
     healthcheck:
       test: ["CMD-SHELL", "curl -sf -H 'Content-Type: application/json' --data '{\"jsonrpc\":\"2.0\",\"method\":\"debug_proofsSyncStatus\",\"params\":[],\"id\":1}' http://localhost:${L2_PROOFS_HTTP_PORT}/ | grep -q '\"result\"'"]
-      interval: 250ms
-      timeout: 1s
-      retries: 240
-      start_period: 250ms
+      <<: *healthcheck-defaults
     restart: unless-stopped
 
   base-proofs-consensus:
@@ -117,10 +129,7 @@ services:
       - -vvv
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:${L2_PROOFS_CL_RPC_PORT}/healthz >/dev/null"]
-      interval: 250ms
-      timeout: 1s
-      retries: 240
-      start_period: 250ms
+      <<: *healthcheck-defaults
     restart: unless-stopped
 
   prover-service-postgres:
@@ -136,10 +145,7 @@ services:
       - ../../crates/proof/prover-service/db/migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U prover -d prover"]
-      interval: 250ms
-      timeout: 1s
-      retries: 240
-      start_period: 250ms
+      <<: *healthcheck-defaults
     restart: unless-stopped
 
   base-prover-service:
@@ -163,10 +169,7 @@ services:
       - OTEL_SERVICE_NAME=base-prover-service
     healthcheck:
       test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/9000"]
-      interval: 250ms
-      timeout: 1s
-      retries: 240
-      start_period: 250ms
+      <<: *healthcheck-defaults
     restart: unless-stopped
 
   nitro-prover-1:
@@ -247,8 +250,5 @@ services:
       - OTEL_SERVICE_NAME=base-proposer
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8080/readyz >/dev/null"]
-      interval: 250ms
-      timeout: 1s
-      retries: 240
-      start_period: 250ms
+      <<: *healthcheck-defaults
     restart: unless-stopped

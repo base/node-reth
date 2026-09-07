@@ -24,12 +24,14 @@ x-node-healthcheck: &node-healthcheck
   timeout: 1s
   retries: 240
   start_period: 250ms
+  start_interval: 250ms
 
 x-conductor-healthcheck: &conductor-healthcheck
   interval: 250ms
   timeout: 2s
   retries: 240
   start_period: 1s
+  start_interval: 250ms
 
 services:
   setup-l2:

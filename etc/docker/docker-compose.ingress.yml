@@ -21,6 +21,7 @@ services:
       timeout: 5s
       retries: 30
       start_period: 5s
+      start_interval: 250ms
     restart: unless-stopped
 
   minio-init:
@@ -74,6 +75,7 @@ services:
       timeout: 5s
       retries: 30
       start_period: 10s
+      start_interval: 250ms
     restart: unless-stopped
 
   proxyd:
@@ -107,6 +109,7 @@ services:
       timeout: 5s
       retries: 30
       start_period: 10s
+      start_interval: 250ms
     restart: unless-stopped
 
   audit-archiver:
@@ -172,6 +175,7 @@ services:
       timeout: 1s
       retries: 240
       start_period: 250ms
+      start_interval: 250ms
     networks:
       default:
         ipv4_address: ${TRANSACTION_EVENTS_POSTGRES_ADVERTISE_IP}
