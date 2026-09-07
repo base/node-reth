@@ -92,6 +92,14 @@ accounts:
 smoke:
     ./etc/scripts/devnet/smoke.sh
 
+# Deploys, updates, or inspects the normal devnet L1 upgrade-signal contract
+upgrade-signal *args:
+    ./etc/scripts/devnet/upgrade-signal.sh {{ args }}
+
+# Moves one devnet upgrade to latest L2 timestamp + offset seconds
+upgrade-signal-future upgrade='azul' offset='120':
+    ./etc/scripts/devnet/upgrade-signal.sh move-future {{ quote(upgrade) }} --offset {{ quote(offset) }}
+
 # Runs full devnet checks (status + smoke tests)
 checks: status smoke
 
