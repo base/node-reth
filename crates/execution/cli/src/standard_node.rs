@@ -888,6 +888,7 @@ fn is_inspector_opcode_name(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::address;
+    use base_execution_payload_builder::ResourceMeteringError;
     use clap::{Args, Parser};
 
     use super::*;
@@ -1355,14 +1356,13 @@ mod tests {
         assert_eq!(args.metering.metering_target_flashblocks_per_block, Some(4));
         assert!(args.metering.resource_metering.resource_metering_schedule.is_none());
 
-        let config = ResourceMeteringConfig::from_parts(
+        let err = ResourceMeteringConfig::from_parts(
             args.metering.enable_metering,
             args.metering.resource_metering.resource_metering_schedule.as_deref(),
             Arc::new(NoopMeteringProvider),
         )
-        .expect("deprecated wall-clock flags must not load a schedule");
-        assert!(config.schedule.is_empty());
-        assert!(!config.is_active());
+        .expect_err("enable-metering without a schedule must fail closed");
+        assert!(matches!(err, ResourceMeteringError::MissingSchedule));
     }
 
     #[test]

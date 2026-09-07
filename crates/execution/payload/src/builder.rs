@@ -178,7 +178,7 @@ impl<Pool, Client, Evm, Txs, Attrs> BasePayloadBuilder<Pool, Client, Evm, Txs, A
 
 impl<Pool, Client, Evm, N, T, Attrs> BasePayloadBuilder<Pool, Client, Evm, T, Attrs>
 where
-    Pool: TransactionPool<Transaction: BasePooledTx<Consensus = N::SignedTx>>,
+    Pool: TransactionPool<Transaction: BasePooledTx<Consensus = N::SignedTx>> + Clone,
     Client: StateProviderFactory + ChainSpecProvider<ChainSpec: Upgrades> + BlockReader,
     N: PayloadPrimitives,
     Evm: ConfigureEvm<
@@ -229,7 +229,10 @@ where
         tracing::Span::current().record("payload_id", tracing::field::display(ctx.payload_id()));
         tracing::Span::current().record("parent_num", ctx.parent().number());
 
-        let builder = Builder::new(best);
+        let pool = self.pool.clone();
+        let builder = Builder::new(best).with_permanent_eviction(move |hashes| {
+            let _ = pool.remove_transactions(hashes);
+        });
 
         let mut state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
         if let Some(execution_cache) = execution_cache {
