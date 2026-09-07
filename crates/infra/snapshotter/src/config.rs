@@ -91,7 +91,7 @@ pub struct SnapshotterConfig {
     pub block: Option<u64>,
 
     /// Blocks per archive file. Auto-inferred from header static files if omitted.
-    #[arg(long)]
+    #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
     pub blocks_per_file: Option<u64>,
 
     /// Maximum number of threads for snapshot archive creation.
