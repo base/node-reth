@@ -641,7 +641,7 @@ mod tests {
     fn metering_data_written_to_provider_is_readable_from_config() {
         let metering_provider: SharedMeteringProvider =
             Arc::new(MeteringStore::new(true, 100, Duration::from_secs(30)));
-        let args = Args { enable_resource_metering: true, ..Default::default() };
+        let args = Args { enable_resource_metering: false, ..Default::default() };
         let config = args
             .into_builder_config(Arc::clone(&metering_provider))
             .expect("conversion should succeed");

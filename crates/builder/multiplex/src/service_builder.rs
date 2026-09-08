@@ -1,8 +1,6 @@
-use std::sync::Arc;
-
 use base_builder_core::{BuilderConfig, FlashblocksServiceBuilder, NodeBounds, PoolBounds};
 use base_execution_evm::BaseEvmConfig;
-use base_execution_payload_builder::{ResourceMeteringConfig, config::BaseBuilderConfig};
+use base_execution_payload_builder::config::BaseBuilderConfig;
 use base_node_core::{
     BaseConsensusBuilder, BaseEngineTypes, BaseExecutorBuilder, BaseNetworkBuilder,
     node::BasePoolBuilder,
@@ -60,20 +58,16 @@ impl MultiplexingServiceBuilder {
 
     /// Native payload settings copied from the shared builder config.
     ///
-    /// Cutover and basic-only modes spawn `BasePayloadBuilder`. The rejection
-    /// cache and metering provider must be the same objects Flashblocks uses,
-    /// otherwise permanently rejected hashes and `meterBundle` data diverge
-    /// after cutover.
+    /// Cutover and basic-only modes spawn `BasePayloadBuilder`. Metering and
+    /// the rejection cache must be the same objects Flashblocks uses, otherwise
+    /// admission and permanently rejected hashes diverge after cutover.
     fn native_payload_config(&self) -> BaseBuilderConfig {
         BaseBuilderConfig {
             da_config: self.builder_config.da_config.clone(),
             gas_limit_config: self.builder_config.gas_limit_config.clone(),
             manifest_precheck_enabled: self.builder_config.manifest_precheck_enabled,
             predicate_eval_hard_cutoff: self.builder_config.predicate_eval_hard_cutoff,
-            resource_metering: ResourceMeteringConfig {
-                provider: Arc::clone(&self.builder_config.metering_provider),
-                ..ResourceMeteringConfig::default()
-            },
+            resource_metering: self.builder_config.resource_metering.clone(),
             rejection_cache: self.builder_config.rejection_cache.clone(),
         }
     }
@@ -198,18 +192,22 @@ impl BasePayloadServiceBuilder for MultiplexingServiceBuilder {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use alloy_primitives::TxHash;
 
     use super::*;
 
     #[test]
-    fn native_payload_config_preserves_metering_provider_and_rejection_cache() {
-        let builder_config = BuilderConfig::default();
+    fn native_payload_config_preserves_metering_and_rejection_cache() {
+        let mut builder_config = BuilderConfig::default();
+        builder_config.resource_metering.enabled = true;
         let hash = TxHash::repeat_byte(0x11);
         builder_config.rejection_cache.insert(hash);
-        let provider = Arc::clone(&builder_config.metering_provider);
+        let provider = Arc::clone(&builder_config.resource_metering.provider);
 
         let native = MultiplexingServiceBuilder::new(builder_config).native_payload_config();
+        assert!(native.resource_metering.enabled);
         assert!(native.rejection_cache.contains_key(&hash));
         assert!(Arc::ptr_eq(&native.resource_metering.provider, &provider));
     }
