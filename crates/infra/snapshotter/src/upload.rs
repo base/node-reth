@@ -26,8 +26,7 @@ use aws_sdk_s3::{
 };
 use base_reth_cli::{ChunkFilename, ComponentManifest, SnapshotManifest, SnapshotManifestExt};
 use futures::stream::{self, StreamExt, TryStreamExt};
-use tokio::time::sleep;
-use tokio::{sync::mpsc, task::JoinHandle};
+use tokio::{sync::mpsc, task::JoinHandle, time::sleep};
 use tracing::{debug, error, info, warn};
 
 use crate::progress::{UploadProgress, UploadStage};
@@ -44,7 +43,7 @@ const MULTIPART_PART_SIZE: u64 = 100 * 1024 * 1024;
 
 /// Part size used for unknown-length streamed archives.
 ///
-/// S3 limits a multipart object to 10,000 parts and 5 TiB. 640 MiB permits an archive as large
+/// S3 limits a multipart object to 10,000 parts and 5 `TiB`. 640 `MiB` permits an archive as large
 /// as the S3 object limit while leaving headroom below the part-count limit. This is deliberately
 /// separate from the smaller file-backed upload part size: a file's total size is known before
 /// upload, while a zstd stream's final compressed size is not.
@@ -53,7 +52,7 @@ const STREAMING_MULTIPART_PART_SIZE: usize = 640 * 1024 * 1024;
 /// Number of complete multipart parts allowed to wait for upload per archive stream.
 ///
 /// A stream producer also holds its current part while it is being filled. With the part size
-/// above, a value of one bounds a single archive stream to roughly 1.25 GiB of compressed output
+/// above, a value of one bounds a single archive stream to roughly 1.25 `GiB` of compressed output
 /// in memory (plus SDK request overhead), while still allowing the producer and uploader to run
 /// concurrently.
 const STREAMING_MULTIPART_CHANNEL_CAPACITY: usize = 1;
@@ -143,7 +142,7 @@ pub struct SnapshotUploader {
 ///
 /// Snapshot archive generation is synchronous (tar and zstd write through `io::Write`), whereas
 /// the AWS SDK is asynchronous. This type bridges those models with a bounded channel: complete
-/// 640 MiB parts are handed to an async task, and the synchronous producer blocks when that task
+/// 640 `MiB` parts are handed to an async task, and the synchronous producer blocks when that task
 /// has not consumed the previous part. Consequently, archive bytes are never staged in a local
 /// file and memory remains bounded per active archive.
 ///
@@ -178,8 +177,8 @@ impl StreamingMultipartUpload {
         self.bytes_written
     }
 
-    /// Flushes the final (possibly smaller than 5 MiB) multipart part and marks the archive input
-    /// complete. The final part is legal because all preceding parts are exactly 640 MiB.
+    /// Flushes the final (possibly smaller than 5 `MiB`) multipart part and marks the archive input
+    /// complete. The final part is legal because all preceding parts are exactly 640 `MiB`.
     ///
     /// This does not wait for the remote object to become visible; use [`Self::complete`] for
     /// that. It is idempotent so cleanup paths can safely call it after a successful finish.
@@ -222,7 +221,7 @@ impl StreamingMultipartUpload {
         self.task.await.context("streaming multipart upload task panicked")?
     }
 
-    fn send_part(&mut self, part: Vec<u8>) -> io::Result<()> {
+    fn send_part(&self, part: Vec<u8>) -> io::Result<()> {
         debug_assert!(!part.is_empty());
         self.sender
             .as_ref()
