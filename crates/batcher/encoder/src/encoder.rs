@@ -172,11 +172,8 @@ impl BatchEncoder {
         BatcherMetrics::channel_closed_total(close_reason).increment(1);
         BatcherMetrics::channel_duration_blocks().record(duration_blocks as f64);
         BatcherMetrics::l2_blocks_per_channel().record(blocks_added as f64);
-        BatcherMetrics::input_bytes(BatcherMetrics::STAGE_CLOSED).set(input_bytes as f64);
-        BatcherMetrics::output_bytes().set(compressed_bytes as f64);
         BatcherMetrics::input_bytes_total().increment(input_bytes);
         BatcherMetrics::output_bytes_total().increment(closed_da_backlog_bytes);
-        BatcherMetrics::channel_num_frames().set(frame_count as f64);
         if input_bytes > 0 {
             let ratio = compressed_bytes as f64 / input_bytes as f64;
             BatcherMetrics::channel_compression_ratio().record(ratio);
@@ -307,6 +304,7 @@ impl BatchEncoder {
             "confirmed channel exceeded derivation timeout, replaying blocks"
         );
 
+        BatcherMetrics::channel_replay_total().increment(1);
         self.ready_channels.truncate(chan_idx);
         self.pending.retain(|_, pending| pending.channel_idx < chan_idx);
         self.current_channel = None;
@@ -517,8 +515,6 @@ impl BatchPipeline for BatchEncoder {
             ChannelAddOutcome::Accepted | ChannelAddOutcome::AcceptedAndFull => {
                 // The queue cursor is the acceptance boundary. Advancing it
                 // earlier would lose a block when the channel rejects a candidate.
-                BatcherMetrics::input_bytes(BatcherMetrics::STAGE_ADDED)
-                    .set(open.input_bytes() as f64);
                 self.block_cursor += 1;
 
                 if outcome == ChannelAddOutcome::AcceptedAndFull {

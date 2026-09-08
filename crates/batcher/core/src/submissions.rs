@@ -123,6 +123,13 @@ impl<TM: TxManager> SubmissionQueue<TM> {
                     match BatchTxCandidateBuilder::blob_tx_candidate(self.inbox, &sub.frames) {
                         Ok((candidate, payload_size)) => {
                             blob_payload_bytes = Some(payload_size);
+                            BatcherMetrics::blobs_per_tx().record(sub.frames.len() as f64);
+                            for frame in &sub.frames {
+                                BatcherMetrics::blob_fill_ratio().record(
+                                    (1 + frame.encoded_len()) as f64
+                                        / BlobEncoder::BLOB_MAX_DATA_SIZE as f64,
+                                );
+                            }
                             candidate
                         }
                         Err(e) => {
