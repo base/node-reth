@@ -8,7 +8,7 @@ x-sequencer-base: &sequencer-base
     target: base
   entrypoint: /app/base-entrypoint.sh
   depends_on:
-    setup-l2:
+    setup-devnet:
       condition: service_completed_successfully
     base-bootnode:
       condition: service_healthy
@@ -35,10 +35,7 @@ x-conductor-healthcheck: &conductor-healthcheck
   start_period: 1s
 
 services:
-  setup-l2:
-    volumes:
-      - ../../.devnet/l2/sequencer-1:/data/l2-sequencer-1
-      - ../../.devnet/l2/sequencer-2:/data/l2-sequencer-2
+  setup-devnet:
     environment:
       - SEQ1_P2P_KEY=${SEQ1_P2P_KEY}
       - SEQ2_P2P_KEY=${SEQ2_P2P_KEY}
@@ -412,7 +409,7 @@ services:
       <<: *conductor-healthcheck
 
   setup-conductor:
-    image: devnet-setup:local
+    image: devnet-setup:local-v2
     container_name: setup-conductor
     depends_on:
       op-conductor-0:
