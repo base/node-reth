@@ -47,6 +47,7 @@ RUN set -eux; \
     rm /tmp/protoc.zip
 
 FROM rust-builder-base AS workspace-source
+# Keep these inputs aligned with workspace members; runtime scripts are copied later.
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY actions ./actions
 COPY bin ./bin
@@ -83,8 +84,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=${SCCACHE_CACHE_ID}-${PROFILE}-target,target=/app/target,from=rust-deps,source=/app/target,sharing=locked \
     set -eux; \
     if [ "$PROFILE" = "dev" ]; then export CARGO_PROFILE_DEV_DEBUG=0; fi; \
-    source_roots="Cargo.toml Cargo.lock rust-toolchain.toml actions bin crates etc/tools etc/systems"; \
-    find $source_roots -type f -exec sha256sum --zero {} + | LC_ALL=C sort -z > /tmp/source-checksums; \
+    find . -path ./target -prune -o -type f -exec sha256sum --zero {} + | LC_ALL=C sort -z > /tmp/source-checksums; \
     touch /app/target/.source-checksums-v1; \
     LC_ALL=C comm -z -13 /app/target/.source-checksums-v1 /tmp/source-checksums | \
       cut -z -c67- | xargs -0 -r touch --; \
