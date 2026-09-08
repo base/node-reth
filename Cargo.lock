@@ -5603,6 +5603,7 @@ dependencies = [
 name = "base-proof-worker"
 version = "0.0.0"
 dependencies = [
+ "alloy-primitives",
  "async-trait",
  "backon",
  "base-prover-service-client",
