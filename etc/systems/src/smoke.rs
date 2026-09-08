@@ -422,7 +422,7 @@ impl SystemTestStackBuilder {
         self
     }
 
-    /// Runs both payload builders and cuts selection from flashblocks to basic at Denim.
+    /// Runs both payload builders and cuts selection from flashblocks to basic at Cobalt.
     pub const fn with_payload_builder_cutover(mut self) -> Self {
         self.payload_builder_cutover = true;
         self
@@ -558,7 +558,11 @@ impl SystemTestStackBuilder {
             }
         });
 
-        SnapshotL2Stack::start_sequencer(SnapshotL2StackConfig { snapshot, container_config }).await
+        SnapshotL2Stack::start_sequencer(SnapshotL2StackConfig {
+            snapshot: *snapshot,
+            container_config,
+        })
+        .await
     }
 
     /// Builds and starts the system test stack.
@@ -620,17 +624,11 @@ impl SystemTestStackBuilder {
             setup = setup.with_base_zenith_activation_block(block);
         }
 
-        if self.devnet_config.use_stable_ports {
-            setup = setup.with_network_name(&self.devnet_config.stable.network_name);
-        }
-
-        let l1_genesis = tokio::task::spawn_blocking({
-            let setup = setup.clone();
-            move || setup.generate_l1_genesis()
-        })
-        .await
-        .wrap_err("L1 genesis task panicked")?
-        .wrap_err("Failed to generate L1 genesis")?;
+        let (l1_genesis, l2_deployment) =
+            tokio::task::spawn_blocking(move || setup.generate_genesis())
+                .await
+                .wrap_err("Genesis setup task panicked")?
+                .wrap_err("Failed to generate L1/L2 genesis")?;
 
         let el_genesis_json = l1_genesis.read_el_genesis()?;
         let jwt_secret_hex = l1_genesis.read_jwt_secret()?;
@@ -687,20 +685,11 @@ impl SystemTestStackBuilder {
             container_config: l1_container_config,
         };
 
-        // Start Reth first, then overlap live L2 deployment with Lighthouse
-        // startup. `op-deployer apply` only needs the EL RPC; its transactions
-        // sit in the mempool until the validator begins producing blocks.
+        // Both chain configurations are complete before L1 starts.
         let l1_execution =
             L1Execution::start(l1_config).await.wrap_err("Failed to start L1 execution layer")?;
-        let l1_internal_rpc_url = l1_execution.reth().internal_rpc_url();
-        let deploy_handle =
-            tokio::task::spawn_blocking(move || setup.deploy_l2_contracts(&l1_internal_rpc_url));
         let l1_stack =
             l1_execution.start_consensus().await.wrap_err("Failed to start L1 consensus")?;
-        let l2_deployment = deploy_handle
-            .await
-            .wrap_err("L2 deployment task panicked")?
-            .wrap_err("Failed to deploy L2 contracts")?;
 
         let jwt_secret = JwtSecret::random();
 

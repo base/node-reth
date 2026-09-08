@@ -82,7 +82,7 @@ pub struct L2StackConfig {
     /// Whether both L2 nodes enable experimental validity transaction transport,
     /// including `base_sendRawTransactionValidity` on the builder.
     pub enable_experimental_validity_transactions: bool,
-    /// Whether the active builder cuts over from flashblocks to basic at Denim.
+    /// Whether the active builder cuts over from flashblocks to basic at Cobalt.
     pub payload_builder_cutover: bool,
     /// Number of L1 blocks to keep distance from the L1 head for the client (validator)
     /// consensus node's derivation pipeline.
@@ -227,6 +227,7 @@ impl L2Stack {
             extra_extensions: config.extra_builder_extensions,
             block_time: Duration::from_secs(rollup_config.block_time),
             persistence_threshold: None,
+            persistence_backpressure_threshold: None,
             txpool_max_transactions: None,
             txpool_max_size_mb: None,
             txpool_max_account_slots: None,
@@ -309,6 +310,7 @@ impl L2Stack {
             p2p_port: container_config.and_then(|c| c.client_p2p_port),
             metrics_port: None,
             persistence_threshold: None,
+            persistence_backpressure_threshold: None,
             tx_forwarding_config,
             enable_experimental_validity_transactions: config
                 .enable_experimental_validity_transactions,

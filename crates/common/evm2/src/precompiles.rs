@@ -36,7 +36,7 @@ const BLS_PAIRING_JOVIAN_MAX: usize = 156_672;
 macro_rules! capped_precompile {
     ($(#[$attr:meta])* $name:ident, $max:expr, $halt:ident, $inner:path) => {
         $(#[$attr])*
-        fn $name(
+        pub fn $name(
             _evm: &mut Evm<'_, BaseEvmTypes>,
             message: &Message<BaseEvmTypes>,
             gas: &mut GasTracker,
@@ -50,64 +50,64 @@ macro_rules! capped_precompile {
     };
 }
 
-capped_precompile!(
-    /// bn254 pairing with the Granite input cap.
-    run_bn254_pair_granite,
-    BN254_PAIR_GRANITE_MAX,
-    Bn254PairLength,
-    bn254::pair::run_istanbul
-);
-capped_precompile!(
-    /// bn254 pairing with the Jovian input cap.
-    run_bn254_pair_jovian,
-    BN254_PAIR_JOVIAN_MAX,
-    Bn254PairLength,
-    bn254::pair::run_istanbul
-);
-capped_precompile!(
-    /// BLS12-381 G1 MSM with the Isthmus input cap.
-    run_bls_g1_msm_isthmus,
-    BLS_G1_MSM_ISTHMUS_MAX,
-    Bls12381G1MsmInputLength,
-    bls12_381::g1_msm::run
-);
-capped_precompile!(
-    /// BLS12-381 G1 MSM with the Jovian input cap.
-    run_bls_g1_msm_jovian,
-    BLS_G1_MSM_JOVIAN_MAX,
-    Bls12381G1MsmInputLength,
-    bls12_381::g1_msm::run
-);
-capped_precompile!(
-    /// BLS12-381 G2 MSM with the Isthmus input cap.
-    run_bls_g2_msm_isthmus,
-    BLS_G2_MSM_ISTHMUS_MAX,
-    Bls12381G2MsmInputLength,
-    bls12_381::g2_msm::run
-);
-capped_precompile!(
-    /// BLS12-381 G2 MSM with the Jovian input cap.
-    run_bls_g2_msm_jovian,
-    BLS_G2_MSM_JOVIAN_MAX,
-    Bls12381G2MsmInputLength,
-    bls12_381::g2_msm::run
-);
-capped_precompile!(
-    /// BLS12-381 pairing with the Isthmus input cap.
-    run_bls_pairing_isthmus,
-    BLS_PAIRING_ISTHMUS_MAX,
-    Bls12381PairingInputLength,
-    bls12_381::pairing::run
-);
-capped_precompile!(
-    /// BLS12-381 pairing with the Jovian input cap.
-    run_bls_pairing_jovian,
-    BLS_PAIRING_JOVIAN_MAX,
-    Bls12381PairingInputLength,
-    bls12_381::pairing::run
-);
-
 impl BaseEvmTypes {
+    capped_precompile!(
+        /// bn254 pairing with the Granite input cap.
+        run_bn254_pair_granite,
+        BN254_PAIR_GRANITE_MAX,
+        Bn254PairLength,
+        bn254::pair::run_istanbul
+    );
+    capped_precompile!(
+        /// bn254 pairing with the Jovian input cap.
+        run_bn254_pair_jovian,
+        BN254_PAIR_JOVIAN_MAX,
+        Bn254PairLength,
+        bn254::pair::run_istanbul
+    );
+    capped_precompile!(
+        /// BLS12-381 G1 MSM with the Isthmus input cap.
+        run_bls_g1_msm_isthmus,
+        BLS_G1_MSM_ISTHMUS_MAX,
+        Bls12381G1MsmInputLength,
+        bls12_381::g1_msm::run
+    );
+    capped_precompile!(
+        /// BLS12-381 G1 MSM with the Jovian input cap.
+        run_bls_g1_msm_jovian,
+        BLS_G1_MSM_JOVIAN_MAX,
+        Bls12381G1MsmInputLength,
+        bls12_381::g1_msm::run
+    );
+    capped_precompile!(
+        /// BLS12-381 G2 MSM with the Isthmus input cap.
+        run_bls_g2_msm_isthmus,
+        BLS_G2_MSM_ISTHMUS_MAX,
+        Bls12381G2MsmInputLength,
+        bls12_381::g2_msm::run
+    );
+    capped_precompile!(
+        /// BLS12-381 G2 MSM with the Jovian input cap.
+        run_bls_g2_msm_jovian,
+        BLS_G2_MSM_JOVIAN_MAX,
+        Bls12381G2MsmInputLength,
+        bls12_381::g2_msm::run
+    );
+    capped_precompile!(
+        /// BLS12-381 pairing with the Isthmus input cap.
+        run_bls_pairing_isthmus,
+        BLS_PAIRING_ISTHMUS_MAX,
+        Bls12381PairingInputLength,
+        bls12_381::pairing::run
+    );
+    capped_precompile!(
+        /// BLS12-381 pairing with the Jovian input cap.
+        run_bls_pairing_jovian,
+        BLS_PAIRING_JOVIAN_MAX,
+        Bls12381PairingInputLength,
+        bls12_381::pairing::run
+    );
+
     /// Returns the Base precompile set for `spec`.
     ///
     /// Starts from the stock Ethereum set for the mapped EVM2 spec ([`Precompiles::base`]) and
@@ -137,13 +137,13 @@ impl BaseEvmTypes {
             map.insert(Precompile::new(
                 BN254_PAIR_ADDRESS,
                 PrecompileId::Bn254Pairing,
-                run_bn254_pair_jovian,
+                Self::run_bn254_pair_jovian,
             ));
         } else if at(BaseUpgrade::Granite) {
             map.insert(Precompile::new(
                 BN254_PAIR_ADDRESS,
                 PrecompileId::Bn254Pairing,
-                run_bn254_pair_granite,
+                Self::run_bn254_pair_granite,
             ));
         }
 
@@ -152,33 +152,33 @@ impl BaseEvmTypes {
             map.insert(Precompile::new(
                 BLS12_G1_MSM_ADDRESS,
                 PrecompileId::Bls12G1Msm,
-                run_bls_g1_msm_jovian,
+                Self::run_bls_g1_msm_jovian,
             ));
             map.insert(Precompile::new(
                 BLS12_G2_MSM_ADDRESS,
                 PrecompileId::Bls12G2Msm,
-                run_bls_g2_msm_jovian,
+                Self::run_bls_g2_msm_jovian,
             ));
             map.insert(Precompile::new(
                 BLS12_PAIRING_ADDRESS,
                 PrecompileId::Bls12Pairing,
-                run_bls_pairing_jovian,
+                Self::run_bls_pairing_jovian,
             ));
         } else if at(BaseUpgrade::Isthmus) {
             map.insert(Precompile::new(
                 BLS12_G1_MSM_ADDRESS,
                 PrecompileId::Bls12G1Msm,
-                run_bls_g1_msm_isthmus,
+                Self::run_bls_g1_msm_isthmus,
             ));
             map.insert(Precompile::new(
                 BLS12_G2_MSM_ADDRESS,
                 PrecompileId::Bls12G2Msm,
-                run_bls_g2_msm_isthmus,
+                Self::run_bls_g2_msm_isthmus,
             ));
             map.insert(Precompile::new(
                 BLS12_PAIRING_ADDRESS,
                 PrecompileId::Bls12Pairing,
-                run_bls_pairing_isthmus,
+                Self::run_bls_pairing_isthmus,
             ));
         }
 
@@ -243,7 +243,7 @@ mod tests {
         let mut evm = evm(BaseUpgrade::Granite);
         // One byte over the Granite cap halts before doing any pairing work.
         let over = message(vec![0u8; BN254_PAIR_GRANITE_MAX + 1]);
-        let err = run_bn254_pair_granite(&mut evm, &over, &mut gas).unwrap_err();
+        let err = BaseEvmTypes::run_bn254_pair_granite(&mut evm, &over, &mut gas).unwrap_err();
         assert_eq!(err.as_halt(), Some(&PrecompileHalt::Bn254PairLength));
     }
 
@@ -254,7 +254,7 @@ mod tests {
         let mut gas = GasTracker::new(u64::MAX);
         let mut evm = evm(BaseUpgrade::Jovian);
         let over = message(vec![0u8; BN254_PAIR_JOVIAN_MAX + 1]);
-        let err = run_bn254_pair_jovian(&mut evm, &over, &mut gas).unwrap_err();
+        let err = BaseEvmTypes::run_bn254_pair_jovian(&mut evm, &over, &mut gas).unwrap_err();
         assert_eq!(err.as_halt(), Some(&PrecompileHalt::Bn254PairLength));
     }
 
@@ -263,7 +263,7 @@ mod tests {
         let mut gas = GasTracker::new(u64::MAX);
         let mut evm = evm(BaseUpgrade::Isthmus);
         let over = message(vec![0u8; BLS_PAIRING_ISTHMUS_MAX + 1]);
-        let err = run_bls_pairing_isthmus(&mut evm, &over, &mut gas).unwrap_err();
+        let err = BaseEvmTypes::run_bls_pairing_isthmus(&mut evm, &over, &mut gas).unwrap_err();
         assert_eq!(err.as_halt(), Some(&PrecompileHalt::Bls12381PairingInputLength));
     }
 

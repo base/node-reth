@@ -2904,6 +2904,7 @@ name = "base"
 version = "0.0.0"
 dependencies = [
  "alloy-chains",
+ "base-batcher-cli",
  "base-builder-cli",
  "base-builder-core",
  "base-builder-metering",
@@ -2925,6 +2926,7 @@ dependencies = [
  "figment",
  "reth-cli-commands",
  "reth-cli-runner",
+ "reth-cli-util",
  "serde",
  "tokio",
  "tokio-util",
@@ -3024,7 +3026,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-batcher-bin"
+name = "base-batcher-cli"
 version = "0.0.0"
 dependencies = [
  "alloy-primitives",
@@ -3033,13 +3035,11 @@ dependencies = [
  "base-batcher-encoder",
  "base-batcher-service",
  "base-cli-utils",
- "base-protocol",
  "base-runtime",
  "base-tx-manager",
  "clap",
  "eyre",
  "humantime",
- "serde",
  "tracing",
  "url",
 ]
@@ -3986,6 +3986,7 @@ dependencies = [
  "base-consensus-disc",
  "base-consensus-peers",
  "base-metrics",
+ "base-protocol",
  "derive_more 2.1.1",
  "discv5 0.10.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures",
@@ -4275,6 +4276,7 @@ dependencies = [
  "base-node-runner",
  "base-observability-events",
  "base-proofs-extension",
+ "base-reth-cli",
  "base-shadow-indexer",
  "base-shadow-indexer-db",
  "base-tx-forwarding",
@@ -4294,6 +4296,7 @@ dependencies = [
  "reth-cli-runner",
  "reth-cli-util",
  "reth-db",
+ "reth-db-api",
  "reth-discv4",
  "reth-discv5",
  "reth-ethereum-forks",
@@ -4306,6 +4309,7 @@ dependencies = [
  "reth-node-metrics",
  "reth-provider",
  "reth-rpc-server-types",
+ "reth-stages-types",
  "reth-tasks",
  "reth-tracing",
  "rstest",
@@ -4413,6 +4417,7 @@ dependencies = [
  "base-execution-chainspec",
  "base-execution-eip8130-rpc",
  "base-node-runner",
+ "base-protocol",
  "base-test-utils",
  "eyre",
  "serde_json",
@@ -5991,9 +5996,17 @@ dependencies = [
 name = "base-reth-cli"
 version = "0.0.0"
 dependencies = [
+ "anyhow",
+ "blake3",
+ "rayon",
  "reth-cli-commands",
  "reth-node-core",
  "reth-prune-types",
+ "serde_json",
+ "tar",
+ "tempfile",
+ "tracing",
+ "zstd",
 ]
 
 [[package]]
@@ -6177,24 +6190,20 @@ dependencies = [
  "async-trait",
  "aws-config",
  "aws-sdk-s3",
- "blake3",
+ "base-reth-cli",
  "bollard",
  "clap",
  "futures",
  "human_bytes",
  "humantime",
- "rayon",
- "reth-cli-commands",
  "serde_json",
  "serial_test",
- "tar",
  "tempfile",
  "testcontainers",
  "testcontainers-modules",
  "tokio",
  "tracing",
  "url",
- "zstd",
 ]
 
 [[package]]
@@ -6504,6 +6513,7 @@ dependencies = [
  "base-execution-txpool",
  "base-node-runner",
  "base-observability-events",
+ "base-test-utils",
  "eyre",
  "httpmock",
  "jsonrpsee",
@@ -11384,13 +11394,13 @@ dependencies = [
  "alloy-primitives",
  "alloy-provider",
  "alloy-rpc-types-eth 2.4.1",
+ "alloy-signer 2.4.1",
  "alloy-signer-local 2.4.1",
  "anyhow",
  "async-trait",
  "audit-archiver-lib",
  "axum 0.8.9",
  "base-bundles",
- "base-common-chains",
  "base-common-consensus",
  "base-common-evm",
  "base-common-network",
