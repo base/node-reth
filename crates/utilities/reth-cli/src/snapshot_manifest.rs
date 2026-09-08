@@ -163,6 +163,7 @@ impl SnapshotGenerator {
             Some(block) => block,
             None => infer_block_from_headers(params.source_datadir)?,
         };
+        let total_blocks = block.checked_add(1).context("snapshot block height exceeds u64")?;
 
         info!(
             source = %params.source_datadir.display(),
@@ -183,7 +184,7 @@ impl SnapshotGenerator {
 
         let mut components = BTreeMap::new();
 
-        let num_chunks = block.div_ceil(blocks_per_file);
+        let num_chunks = total_blocks.div_ceil(blocks_per_file);
         if num_chunks > MAX_CHUNKS {
             bail!(
                 "too many chunks ({num_chunks}) for block {block} with blocks_per_file \
@@ -286,7 +287,7 @@ impl SnapshotGenerator {
                 info!(
                     component = key,
                     compressed_size = total_size,
-                    total_blocks = block,
+                    total_blocks,
                     "packaged chunked component"
                 );
 
@@ -294,7 +295,7 @@ impl SnapshotGenerator {
                     key.to_string(),
                     ComponentManifest::Chunked(ChunkedArchive {
                         blocks_per_file,
-                        total_blocks: block,
+                        total_blocks,
                         chunk_sizes,
                         chunk_decompressed_sizes: chunk_decompressed,
                         chunk_output_files,
@@ -304,53 +305,11 @@ impl SnapshotGenerator {
             }
         }
 
-        let state_files = state_source_files(params.source_datadir)?;
-        let (state_size, state_output_files) =
-            package_single_component(params.output_dir, "state.tar.zst", &state_files)?;
-        let state_decompressed_size: u64 = state_output_files.iter().map(|f| f.size).sum();
-        info!(
-            component = "state",
-            compressed_size = state_size,
-            decompressed_size = state_decompressed_size,
-            file_count = state_files.len(),
-            "packaged mdbx state database"
-        );
-        components.insert(
-            "state".to_string(),
-            ComponentManifest::Single(SingleArchive {
-                file: "state.tar.zst".to_string(),
-                size: state_size,
-                decompressed_size: state_decompressed_size,
-                blake3: None,
-                output_files: state_output_files,
-            }),
-        );
-
+        let mut single_components =
+            vec![("state", "state.tar.zst", state_source_files(params.source_datadir)?)];
         let rocksdb_files = rocksdb_source_files(params.source_datadir)?;
         if !rocksdb_files.is_empty() {
-            let (rocksdb_size, rocksdb_output_files) = package_single_component(
-                params.output_dir,
-                "rocksdb_indices.tar.zst",
-                &rocksdb_files,
-            )?;
-            let rocksdb_decompressed_size: u64 = rocksdb_output_files.iter().map(|f| f.size).sum();
-            info!(
-                component = "rocksdb_indices",
-                compressed_size = rocksdb_size,
-                decompressed_size = rocksdb_decompressed_size,
-                file_count = rocksdb_files.len(),
-                "packaged rocksdb indices"
-            );
-            components.insert(
-                "rocksdb_indices".to_string(),
-                ComponentManifest::Single(SingleArchive {
-                    file: "rocksdb_indices.tar.zst".to_string(),
-                    size: rocksdb_size,
-                    decompressed_size: rocksdb_decompressed_size,
-                    blake3: None,
-                    output_files: rocksdb_output_files,
-                }),
-            );
+            single_components.push(("rocksdb_indices", "rocksdb_indices.tar.zst", rocksdb_files));
         }
 
         let proofs_files = if params.upload_proofs {
@@ -359,24 +318,39 @@ impl SnapshotGenerator {
             Vec::new()
         };
         if !proofs_files.is_empty() {
-            let (proofs_size, proofs_output_files) =
-                package_single_component(params.output_dir, "proofs.tar.zst", &proofs_files)?;
-            let proofs_decompressed_size: u64 = proofs_output_files.iter().map(|f| f.size).sum();
+            single_components.push(("proofs", "proofs.tar.zst", proofs_files));
+        }
+
+        // These source trees and output archives are independent. Package them on the shared
+        // Rayon pool so the snapshotter's `--snapshot-threads` limit applies to this work too.
+        let packaged_single_components = single_components
+            .into_par_iter()
+            .map(|(component, archive_name, files)| {
+                let (size, output_files) =
+                    package_single_component(params.output_dir, archive_name, &files)?;
+                let decompressed_size = output_files.iter().map(|file| file.size).sum();
+                Ok((component, archive_name, files.len(), size, decompressed_size, output_files))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        for (component, archive_name, file_count, size, decompressed_size, output_files) in
+            packaged_single_components
+        {
             info!(
-                component = "proofs",
-                compressed_size = proofs_size,
-                decompressed_size = proofs_decompressed_size,
-                file_count = proofs_files.len(),
-                "packaged proofs database"
+                component,
+                compressed_size = size,
+                decompressed_size,
+                file_count,
+                "packaged database component"
             );
             components.insert(
-                "proofs".to_string(),
+                component.to_string(),
                 ComponentManifest::Single(SingleArchive {
-                    file: "proofs.tar.zst".to_string(),
-                    size: proofs_size,
-                    decompressed_size: proofs_decompressed_size,
+                    file: archive_name.to_string(),
+                    size,
+                    decompressed_size,
                     blake3: None,
-                    output_files: proofs_output_files,
+                    output_files,
                 }),
             );
         }
@@ -936,6 +910,48 @@ mod tests {
     }
 
     #[test]
+    fn generate_manifest_includes_chunk_containing_exact_block_height() {
+        let source = tempfile::tempdir().unwrap();
+        let output = tempfile::tempdir().unwrap();
+        let db_dir = source.path().join("db");
+        std::fs::create_dir_all(&db_dir).unwrap();
+        std::fs::write(db_dir.join("mdbx.dat"), b"state-data").unwrap();
+
+        let static_files_dir = source.path().join("static_files");
+        std::fs::create_dir_all(&static_files_dir).unwrap();
+        std::fs::write(static_files_dir.join("static_file_headers_0_499999"), b"first").unwrap();
+        std::fs::write(static_files_dir.join("static_file_headers_500000_999999"), b"second")
+            .unwrap();
+
+        let remote = HashMap::new();
+        let files = SnapshotGenerator::generate_manifest(&test_manifest_params(
+            source.path(),
+            output.path(),
+            &remote,
+            None,
+            Some(500_000),
+            false,
+        ))
+        .unwrap();
+
+        assert!(files.iter().any(|path| {
+            path.file_name().is_some_and(|name| name == "headers-500000-999999.tar.zst")
+        }));
+
+        let manifest: SnapshotManifest =
+            serde_json::from_slice(&std::fs::read(output.path().join("manifest.json")).unwrap())
+                .unwrap();
+        assert_eq!(manifest.block, 500_000);
+        let ComponentManifest::Chunked(headers) = &manifest.components["headers"] else {
+            panic!("headers component should be chunked");
+        };
+        assert_eq!(headers.total_blocks, 500_001);
+        assert_eq!(headers.chunk_sizes.len(), 2);
+        assert_eq!(headers.chunk_output_files.len(), 2);
+        assert!(!headers.chunk_output_files[1].is_empty());
+    }
+
+    #[test]
     fn generate_manifest_creates_proofs_archive() {
         let source = tempfile::tempdir().unwrap();
         let output = tempfile::tempdir().unwrap();
@@ -1096,7 +1112,7 @@ mod tests {
             output.path(),
             &remote,
             Some(&previous_manifest),
-            Some(2_000_000),
+            Some(1_999_999),
             false,
         ))
         .unwrap();
@@ -1158,7 +1174,7 @@ mod tests {
             output_dir: output.path(),
             chain_id: 8453,
             base_url: None,
-            block: Some(2_000_000),
+            block: Some(1_999_999),
             blocks_per_file: Some(500_000),
             remote_static_files: &remote,
             previous_manifest: Some(&previous_manifest),

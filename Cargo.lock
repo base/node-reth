@@ -2904,6 +2904,7 @@ name = "base"
 version = "0.0.0"
 dependencies = [
  "alloy-chains",
+ "base-batcher-cli",
  "base-builder-cli",
  "base-builder-core",
  "base-builder-metering",
@@ -2925,6 +2926,7 @@ dependencies = [
  "figment",
  "reth-cli-commands",
  "reth-cli-runner",
+ "reth-cli-util",
  "serde",
  "tokio",
  "tokio-util",
@@ -3024,7 +3026,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-batcher-bin"
+name = "base-batcher-cli"
 version = "0.0.0"
 dependencies = [
  "alloy-primitives",
@@ -3033,13 +3035,11 @@ dependencies = [
  "base-batcher-encoder",
  "base-batcher-service",
  "base-cli-utils",
- "base-protocol",
  "base-runtime",
  "base-tx-manager",
  "clap",
  "eyre",
  "humantime",
- "serde",
  "tracing",
  "url",
 ]

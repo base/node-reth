@@ -135,8 +135,8 @@ inherits = "release"
 debug = true
 strip = false
 
-# TODO: add `rustflags = ["-Cforce-frame-pointers=yes"]` here once
-# `profile-rustflags` is stabilized (tracking: rust-lang/cargo#10271)
+# Docker profiling builds add `-Cforce-frame-pointers=yes` in docker-bake.hcl.
+# Move it here once profile-rustflags is stabilized (tracking: rust-lang/cargo#10271).
 [profile.profiling]
 inherits = "release"
 lto = false
@@ -265,6 +265,7 @@ base-proof-succinct-elfs = { path = "crates/proof/zk/backend/elfs" }
 
 # Batcher
 base-blobs = { path = "crates/batcher/blobs" }
+base-batcher-cli = { path = "crates/batcher/cli" }
 base-batcher-core = { path = "crates/batcher/core" }
 base-batcher-admin = { path = "crates/batcher/admin" }
 base-batcher-source = { path = "crates/batcher/source" }
