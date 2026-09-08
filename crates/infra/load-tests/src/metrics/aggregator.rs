@@ -7,7 +7,6 @@ use super::{
     GasMetrics, LatencyMetrics, PacingMetrics, SubmissionStats, SubmitCohortLabel,
     ThroughputMetrics, ThroughputPercentiles, ThroughputSample, TransactionMetrics,
 };
-use crate::AcceptanceReport;
 
 /// Aggregates raw transaction metrics into summary statistics.
 #[derive(Debug)]
@@ -54,7 +53,6 @@ impl<'a> MetricsAggregator<'a> {
         MetricsSummary {
             config,
             error: None,
-            acceptance: None,
             measurement_start_block: None,
             measurement_end_block: None,
             measurement_block_count: 0,
@@ -296,9 +294,6 @@ pub struct MetricsSummary {
     /// Fatal error that stopped the test (e.g., funding failure).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
-    /// Opt-in acceptance decision, evaluated after receipt enrichment.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub acceptance: Option<AcceptanceReport>,
     /// Exclusive block number immediately before measured submission started.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub measurement_start_block: Option<u64>,

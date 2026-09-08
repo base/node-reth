@@ -50,35 +50,6 @@ cargo test -p base-load-tests
 cargo run -p base-load-tester-bin --bin base-load-tester -- path/to/config.yaml
 ```
 
-## Cobalt acceptance
-
-`examples/cobalt-devnet.yaml` exercises canonical-only inclusion at 200ms with the same
-20M gas/s transfer/calldata/precompile mix as `examples/devnet.yaml`. The offered budget is
-4M gas per block rather than 40M; the profile does not activate Cobalt or change chain capacity.
-Use a local devnet with Cobalt active, native building enabled, and a block gas limit sized for
-the comparison (one tenth of the 2s baseline limit to preserve gas/s capacity). No Flashblocks
-WebSocket or automatic txpool clearing is configured.
-
-```bash
-# Use a funded local-devnet account, never a production key.
-FUNDER_KEY=0x... LOAD_TEST_OUTPUT=cobalt-results.json \
-  cargo run -p base-load-tester-bin --bin base-load-tester -- \
-  crates/infra/load-tests/examples/cobalt-devnet.yaml
-jq -e '.acceptance.passed == true' cobalt-results.json
-```
-
-The opt-in `acceptance` section adds a decision, thresholds, and named pass/fail checks to the
-ordinary metrics JSON. Failed gates make the CLI exit unsuccessfully **after cleanup**. Runs
-without this section keep their existing behavior. Acceptance cannot be combined with continuous
-mode. Empty runs, missing confirmations or receipts, submission failures, and reverts fail closed.
-
-The example requires at least 18M confirmed gas/s (90% of target), 125 observed canonical blocks
-during the 30s submission window (150 expected), p95 inclusion latency ≤1s, and p95 RPC availability
-lag ≤100ms. These are editable local regression thresholds, not launch SLAs. Throughput still uses
-the configured block interval; availability lag includes local clock skew and RPC transport delay.
-These gates do not prove consensus cadence, fork activation, Flashblocks retirement, or production
-soak/HA readiness; use the corresponding protocol/system tests and deployment checks for those.
-
 ## Configuration
 
 All configuration is done via YAML files. The runner uses a single adaptive open-loop submission
