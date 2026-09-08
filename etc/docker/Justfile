@@ -169,8 +169,8 @@ build-image target='base' profile='dev':
 # Prepares Docker images needed for system tests
 pull-images:
     docker build --load -t devnet-setup:local -f etc/docker/Dockerfile.devnet .
-    docker pull ghcr.io/paradigmxyz/reth:v1.11.4
-    docker pull sigp/lighthouse:v8.0.1
+    docker pull ghcr.io/paradigmxyz/reth:v2.5.2
+    docker pull sigp/lighthouse:v8.2.2
 
 # Reth's unoptimized node launch overflows the 2 MiB stack libtest gives each test thread,
 # which SIGSEGVs on Linux. Do not move to nextest.toml `[env]`; nextest silently drops it.
