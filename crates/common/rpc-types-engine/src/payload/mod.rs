@@ -24,10 +24,10 @@ use alloy_rpc_types_engine::{
     ExecutionPayload, ExecutionPayloadInputV2, ExecutionPayloadV1, ExecutionPayloadV2,
     ExecutionPayloadV3, PayloadError,
 };
+use base_common_consensus::decode_2718_canonical;
 pub use v5::BaseExecutionPayloadEnvelopeV5;
 
 use crate::BaseExecutionPayloadSidecar;
-use base_common_consensus::decode_2718_canonical;
 
 /// An execution payload, which can be either [`ExecutionPayloadV2`], [`ExecutionPayloadV3`], or
 /// [`BaseExecutionPayloadV4`].

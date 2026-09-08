@@ -24,10 +24,10 @@ pub fn decode_2718_canonical<T: Decodable2718 + Encodable2718>(bytes: &[u8]) -> 
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use alloy_consensus::{SignableTransaction, TxEip1559, TxLegacy};
     use alloy_primitives::{Address, Bytes, Signature, U256};
 
+    use super::*;
     use crate::BaseTxEnvelope;
 
     #[test]
