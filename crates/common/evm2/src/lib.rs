@@ -28,8 +28,7 @@ pub use executor::{
 
 mod registry;
 
-mod eip8130_gas;
-pub use eip8130_gas::{
+pub use base_common_eip8130::{
     AuthWireForm, Eip8130GasSchedule, IntrinsicGas, IntrinsicGasError, IntrinsicGasInput,
 };
 
