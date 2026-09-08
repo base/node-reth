@@ -46,7 +46,7 @@ pub use source::{
 };
 
 mod predeploys;
-pub use predeploys::{Deployers, Predeploys, SystemAddresses};
+pub use predeploys::{DeterministicDeploymentProxy, Deployers, Predeploys, SystemAddresses};
 
 mod block;
 pub use block::BaseBlock;

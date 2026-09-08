@@ -3,7 +3,7 @@
 //! This module contains predeploy contract addresses and system addresses for Base.
 //! See the complete set of predeploys at <https://specs.base.org/protocol/execution/evm/predeploys#predeploys>
 
-use alloy_primitives::{Address, address};
+use alloy_primitives::{Address, address, hex};
 
 /// Container for all predeploy contract addresses
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -144,6 +144,47 @@ impl Predeploys {
     pub const BASE_TIME: Address = address!("0x4200000000000000000000000000000000000030");
 }
 
+/// The canonical deterministic-deployment CREATE2 factory (the "Arachnid proxy"),
+/// formalized as a required predeploy by [EIP-7997].
+///
+/// The factory has fixed runtime bytecode at a fixed address on every chain. A call
+/// treats the first 32 bytes of input as the CREATE2 salt and the remaining bytes as
+/// init code, forwards call value, and returns the 20-byte deployed address.
+///
+/// EIP-7997 allows the account to be established either by its keyless creation
+/// transaction or by inclusion in the genesis state with a nonce of 1. On existing
+/// Base networks it is already present via the keyless transaction (Base mainnet
+/// carries [`Self::RUNTIME_CODE`] with a nonzero nonce), so no fork-boundary action
+/// is taken: per EIP-7997, "client software MUST NOT check for the existence of the
+/// contract at the fork boundary". New chains include it in their genesis allocation
+/// using [`Self::ADDRESS`], [`Self::RUNTIME_CODE`], and [`Self::GENESIS_NONCE`].
+///
+/// This is deliberately kept separate from [`Predeploys`], which are the proxied
+/// `0x42..` OP system contracts; the factory is a plain, non-proxied account.
+///
+/// [EIP-7997]: https://eips.ethereum.org/EIPS/eip-7997
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct DeterministicDeploymentProxy;
+
+impl DeterministicDeploymentProxy {
+    /// The fixed factory address, equal to the CREATE address of the keyless
+    /// deployment signer at nonce 0.
+    pub const ADDRESS: Address = address!("0x4e59b44847b379578588920cA78FbF26c0B4956C");
+
+    /// The keyless signer whose nonce-0 CREATE establishes [`Self::ADDRESS`].
+    pub const DEPLOYER: Address = address!("0x3fAB184622Dc19b6109349B94811493BF2a45362");
+
+    /// The fixed runtime bytecode required by EIP-7997.
+    pub const RUNTIME_CODE: &'static [u8] = &hex!(
+        "7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3"
+    );
+
+    /// The account nonce required when the factory is included in a chain's genesis
+    /// allocation.
+    pub const GENESIS_NONCE: u64 = 1;
+}
+
 /// Container for system addresses that are not predeploy contracts.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -189,4 +230,32 @@ impl Deployers {
     /// Jovian Gas Price Oracle deployer address.
     pub const JOVIAN_GAS_PRICE_ORACLE: Address =
         address!("4210000000000000000000000000000000000007");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn factory_address_is_create_of_keyless_deployer() {
+        // Per EIP-7997 the factory lives at the CREATE address of the keyless
+        // deployment signer at nonce 0. Deriving it independently guards the
+        // address constant against typos.
+        assert_eq!(
+            DeterministicDeploymentProxy::DEPLOYER.create(0),
+            DeterministicDeploymentProxy::ADDRESS,
+        );
+    }
+
+    #[test]
+    fn factory_runtime_code_matches_eip7997() {
+        // Golden value fixed by EIP-7997 and verified live on Base mainnet via
+        // `eth_getCode(0x4e59…56C)`. A single wrong byte silently breaks CREATE2
+        // determinism, so pin the exact bytecode.
+        assert_eq!(
+            hex::encode(DeterministicDeploymentProxy::RUNTIME_CODE),
+            "7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3",
+        );
+        assert_eq!(DeterministicDeploymentProxy::GENESIS_NONCE, 1);
+    }
 }
