@@ -713,10 +713,11 @@ impl BaseExecutionPayload {
         &self,
     ) -> impl Iterator<Item = alloy_eips::eip2718::Eip2718Result<alloy_eips::eip2718::WithEncoded<T>>> + '_
     {
-        self.transactions().iter().map(|tx_bytes| {
-            decode_2718_canonical::<T>(tx_bytes.as_ref())
-                .map(|tx| alloy_eips::eip2718::WithEncoded::new(tx_bytes.clone(), tx))
-        })
+        self.transactions().iter().cloned().zip(self.decoded_transactions()).map(
+            |(tx_bytes, result)| {
+                result.map(|tx| alloy_eips::eip2718::WithEncoded::new(tx_bytes, tx))
+            },
+        )
     }
 
     /// Returns an iterator over the recovered transactions in this payload.
@@ -755,15 +756,12 @@ impl BaseExecutionPayload {
     where
         T: Decodable2718 + Encodable2718 + alloy_consensus::transaction::SignerRecoverable,
     {
-        self.transactions().iter().map(|tx_bytes| {
-            decode_2718_canonical::<T>(tx_bytes.as_ref())
-                .map_err(alloy_consensus::crypto::RecoveryError::from_source)
-                .and_then(|tx| {
-                    tx.try_into_recovered().map(|recovered| {
-                        alloy_eips::eip2718::WithEncoded::new(tx_bytes.clone(), recovered)
-                    })
-                })
-        })
+        self.transactions().iter().cloned().zip(self.recovered_transactions()).map(
+            |(tx_bytes, result)| {
+                result
+                    .map(|transaction| alloy_eips::eip2718::WithEncoded::new(tx_bytes, transaction))
+            },
+        )
     }
 }
 
