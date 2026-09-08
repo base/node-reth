@@ -362,6 +362,8 @@ services:
       target: base
     entrypoint: /app/base
     container_name: base-batcher
+    # Skip the L1 receipt drain when stopping the disposable devnet batcher.
+    stop_signal: SIGKILL
     depends_on:
       base-builder:
         condition: service_healthy
