@@ -54,29 +54,10 @@ services:
     depends_on:
       setup-conductor:
         condition: service_completed_successfully
-    command:
-      - batcher
-      - --l1-rpc-url
-      - http://l1-el:${L1_HTTP_PORT}
-      - --l2-rpc-url
-      - http://base-builder:${L2_BUILDER_HTTP_PORT}
-      - --rollup-rpc-url
-      - http://op-conductor-0:${CONDUCTOR0_RPC_PORT}
-      - --private-key
-      - ${BATCHER_KEY}
-      - --max-channel-duration
-      - "2"
-      - --poll-interval
-      - "1"
-      - --sub-safety-margin
-      - "0"
-      - --num-confirmations
-      - "1"
-      - --metrics.enabled
-      - --metrics.addr
-      - "0.0.0.0"
-      - --metrics.port
-      - "${BATCHER_METRICS_PORT}"
+    # Each implementation reads its own rollup RPC environment variable.
+    environment:
+      - OP_BATCHER_ROLLUP_RPC=http://op-conductor-0:${CONDUCTOR0_RPC_PORT}
+      - BASE_BATCHER_ROLLUP_RPC_URL=http://op-conductor-0:${CONDUCTOR0_RPC_PORT}
 
   base-sequencer-1:
     <<: *sequencer-base

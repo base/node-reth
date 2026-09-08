@@ -14,12 +14,20 @@ variable "ZK_HOST_PROFILE" {
   default = "release"
 }
 
+variable "BATCHER_IMPL" {
+  default = "op-batcher"
+  validation {
+    condition = contains(["op-batcher", "base-batcher"], BATCHER_IMPL)
+    error_message = "BATCHER_IMPL must be op-batcher or base-batcher."
+  }
+}
+
 variable "DEVNET_TARGETS" {
-  default = ["base"]
+  default = BATCHER_IMPL == "op-batcher" ? ["base", "op-batcher"] : ["base"]
 }
 
 variable "INGRESS_TARGETS" {
-  default = ["base", "ingress-rpc", "audit-archiver"]
+  default = concat(["base", "ingress-rpc", "audit-archiver"], BATCHER_IMPL == "op-batcher" ? ["op-batcher"] : [])
 }
 
 group "default" {
@@ -173,6 +181,12 @@ target "audit-archiver" {
     SCCACHE_CACHE_ID = "rust-services-audit-archiver-sccache"
   }
   tags = ["audit-archiver:local"]
+}
+
+target "op-batcher" {
+  context = "."
+  dockerfile = "etc/docker/Dockerfile.op-batcher"
+  tags = ["op-batcher:local"]
 }
 
 target "sidecrush" {

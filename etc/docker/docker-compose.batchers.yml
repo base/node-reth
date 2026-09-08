@@ -1,0 +1,54 @@
+# Service templates selected by BATCHER_IMPL via Compose extends; only the
+# selected implementation runs, under the existing base-batcher service name.
+services:
+  op-batcher:
+    image: op-batcher:local
+    build:
+      context: ../..
+      dockerfile: etc/docker/Dockerfile.op-batcher
+    environment:
+      - OP_BATCHER_ROLLUP_RPC=http://base-builder:${L2_BUILDER_CL_RPC_PORT}
+    command:
+      - --l1-eth-rpc=http://l1-el:${L1_HTTP_PORT}
+      - --l2-eth-rpc=http://base-builder:${L2_BUILDER_HTTP_PORT}
+      - --private-key=${BATCHER_KEY}
+      - --batch-type=0
+      - --data-availability-type=blobs
+      - --compression-algo=brotli
+      - --compressor=shadow
+      - --max-channel-duration=2
+      - --poll-interval=1s
+      - --sub-safety-margin=0
+      - --num-confirmations=1
+      - --max-pending-tx=1
+      - --target-num-frames=1
+      # Devnet L1 has Fusaka active at genesis; chain 1337 is not auto-detected.
+      - --txmgr.cell-proof-time=0
+      - --metrics.enabled
+      - --metrics.addr=0.0.0.0
+      - --metrics.port=${BATCHER_METRICS_PORT}
+
+  base-batcher:
+    image: base:local
+    build:
+      context: ../..
+      dockerfile: etc/docker/Dockerfile.rust-services
+      target: base
+      args:
+        PROFILE: "${CARGO_PROFILE:-dev}"
+        BASE_SUCCINCT_ELF_REQUIRE: "${BASE_SUCCINCT_ELF_REQUIRE:-0}"
+    entrypoint: /app/base
+    environment:
+      - BASE_BATCHER_ROLLUP_RPC_URL=http://base-builder:${L2_BUILDER_CL_RPC_PORT}
+    command:
+      - batcher
+      - --l1-rpc-url=http://l1-el:${L1_HTTP_PORT}
+      - --l2-rpc-url=http://base-builder:${L2_BUILDER_HTTP_PORT}
+      - --private-key=${BATCHER_KEY}
+      - --max-channel-duration=2
+      - --poll-interval=1
+      - --sub-safety-margin=0
+      - --num-confirmations=1
+      - --metrics.enabled
+      - --metrics.addr=0.0.0.0
+      - --metrics.port=${BATCHER_METRICS_PORT}

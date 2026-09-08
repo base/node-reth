@@ -356,11 +356,9 @@ services:
     restart: unless-stopped
 
   base-batcher:
-    image: base:local
-    build:
-      <<: *rust-service-build
-      target: base
-    entrypoint: /app/base
+    extends:
+      file: docker-compose.batchers.yml
+      service: ${BATCHER_IMPL:-op-batcher}
     container_name: base-batcher
     # Skip the L1 receipt drain when stopping the disposable devnet batcher.
     stop_signal: SIGKILL
@@ -369,29 +367,6 @@ services:
         condition: service_healthy
     ports:
       - "${BATCHER_METRICS_PORT}:${BATCHER_METRICS_PORT}"   # Metrics
-    command:
-      - batcher
-      - --l1-rpc-url
-      - http://l1-el:${L1_HTTP_PORT}
-      - --l2-rpc-url
-      - http://base-builder:${L2_BUILDER_HTTP_PORT}
-      - --rollup-rpc-url
-      - http://base-builder:${L2_BUILDER_CL_RPC_PORT}
-      - --private-key
-      - ${BATCHER_KEY}
-      - --max-channel-duration
-      - "2"
-      - --poll-interval
-      - "1"
-      - --sub-safety-margin
-      - "0"
-      - --num-confirmations
-      - "1"
-      - --metrics.enabled
-      - --metrics.addr
-      - "0.0.0.0"
-      - --metrics.port
-      - "${BATCHER_METRICS_PORT}"
     restart: unless-stopped
 
   base-client:
