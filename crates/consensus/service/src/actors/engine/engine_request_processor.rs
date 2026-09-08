@@ -341,7 +341,17 @@ where
         &mut self,
         envelope: BaseExecutionPayloadEnvelope,
         result_tx: Option<mpsc::Sender<InsertTaskResult>>,
+        log_upgrade_activation: bool,
     ) {
+        if log_upgrade_activation {
+            self.rollup.log_upgrade_activation(
+                envelope.execution_payload.block_number(),
+                envelope.execution_payload.timestamp(),
+                self.rollup.l2_block_timestamp(
+                    envelope.execution_payload.block_number().saturating_sub(1),
+                ),
+            );
+        }
         let task = match result_tx {
             Some(result_tx) => {
                 EngineTask::Insert(Box::new(InsertTask::unsafe_payload_with_result(
@@ -360,7 +370,7 @@ where
         self.engine.enqueue(task);
     }
 
-    /// Enqueues an unsafe payload already validated at ingress.
+    /// Enqueues an externally received unsafe payload.
     pub fn handle_external_unsafe_l2_block(&mut self, envelope: BaseExecutionPayloadEnvelope) {
         info!(
             target: "engine",
@@ -369,13 +379,7 @@ where
             parent_hash = %envelope.execution_payload.parent_hash(),
             "Enqueuing external unsafe payload"
         );
-        self.rollup.log_upgrade_activation(
-            envelope.execution_payload.block_number(),
-            envelope.execution_payload.timestamp(),
-            self.rollup
-                .l2_block_timestamp(envelope.execution_payload.block_number().saturating_sub(1)),
-        );
-        self.enqueue_unsafe_payload_insert(envelope, None);
+        self.enqueue_unsafe_payload_insert(envelope, None, true);
     }
 
     /// Applies inputs already validated and selected by a shadow reconciliation gate.
@@ -486,7 +490,7 @@ where
             parent_hash = %envelope.execution_payload.parent_hash(),
             "Enqueuing local sequencer unsafe payload"
         );
-        self.enqueue_unsafe_payload_insert(envelope, result_tx);
+        self.enqueue_unsafe_payload_insert(envelope, result_tx, false);
     }
 
     async fn mark_el_sync_complete_and_notify_derivation_actor(
@@ -1014,7 +1018,7 @@ mod tests {
                 .block_number()
                 .checked_sub(unsafe_head.block_info.number);
             if block_gap.is_some_and(|gap| gap > 0 && gap <= 300) {
-                processor.enqueue_unsafe_payload_insert(envelope, None);
+                processor.enqueue_unsafe_payload_insert(envelope, None, false);
             }
         } else {
             processor.handle_external_unsafe_l2_block(envelope);
@@ -1047,7 +1051,7 @@ mod tests {
                 unreachable!();
             };
             payload.timestamp = 10;
-            processor.handle_external_unsafe_l2_block(envelope);
+            processor.enqueue_unsafe_payload_insert(envelope, None, true);
         }
 
         let activation_logs =
