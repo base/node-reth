@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use base_batcher_encoder::{BatchPipeline, DerivationReconciliation, StepResult};
+use base_batcher_encoder::{BatchPipeline, BatcherMetrics, DerivationReconciliation, StepResult};
 use base_batcher_source::{
     L1HeadEvent, L1HeadSource, L2BlockEvent, SourceError, UnsafeBlockSource,
 };
@@ -275,7 +275,7 @@ where
                 }
                 DriverEvent::Reorg => {
                     warn!("L2 reorg detected, resetting pipeline and catching up from safe head");
-                    self.reset_to_safe_head();
+                    self.reset_to_safe_head(BatcherMetrics::RESET_SOURCE_REORG);
                 }
                 DriverEvent::Receipt(ids, o) => {
                     self.submissions.handle_outcome(&mut self.pipeline, ids, o);
@@ -326,16 +326,21 @@ where
         Ok(idle)
     }
 
-    /// Reset volatile state and restart delivery above the latest safe head.
-    fn reset_to_safe_head(&mut self) {
+    /// Drop buffered pipeline state, recording why it was dropped.
+    fn reset_pipeline(&mut self, reason: &'static str) {
+        BatcherMetrics::pipeline_reset_total(reason).increment(1);
         self.submissions.discard();
         self.pipeline.reset();
+        self.discard_pending_flush_acks();
+    }
+
+    /// Reset volatile state and restart delivery above the latest safe head.
+    fn reset_to_safe_head(&mut self, reason: &'static str) {
+        self.reset_pipeline(reason);
 
         if let Some(safe_head) = self.safe_head {
             self.source.reset_catchup(safe_head);
         }
-
-        self.discard_pending_flush_acks();
     }
 
     /// Reconcile buffered state with an ordered derivation-progress snapshot.
@@ -354,7 +359,7 @@ where
                 safe_hash = %head.hash,
                 "safe L2 head changed chain, resetting pipeline"
             );
-            self.reset_to_safe_head();
+            self.reset_to_safe_head(BatcherMetrics::RESET_SAFE_HEAD_REORG);
             return;
         }
 
@@ -369,7 +374,7 @@ where
                     safe_hash = %head.hash,
                     "safe L2 head does not match buffered chain, resetting pipeline"
                 );
-                self.reset_to_safe_head();
+                self.reset_to_safe_head(BatcherMetrics::RESET_SAFE_HEAD_MISMATCH);
             }
             DerivationReconciliation::StalledChannel => {
                 warn!(
@@ -377,7 +382,7 @@ where
                     safe_l2 = %head.number,
                     "rollup node passed a fully confirmed channel without deriving it, resetting pipeline"
                 );
-                self.reset_to_safe_head();
+                self.reset_to_safe_head(BatcherMetrics::RESET_STALLED_CHANNEL);
             }
         }
     }
@@ -424,7 +429,7 @@ where
                     error = %e,
                     "reorg detected during block ingestion, resetting pipeline and catching up from safe head"
                 );
-                self.reset_to_safe_head();
+                self.reset_to_safe_head(BatcherMetrics::RESET_INGEST_REORG);
             }
         }
     }
@@ -466,10 +471,8 @@ where
                     match cmd {
                         AdminCommand::Flush { ack } => return Ok(DriverEvent::Flush(ack)),
                         AdminCommand::Pause => {
-                            self.submissions.discard();
-                            self.pipeline.reset();
+                            self.reset_pipeline(BatcherMetrics::RESET_ADMIN_PAUSE);
                             self.stopped = true;
-                            self.discard_pending_flush_acks();
                             info!(stopped = true, "batcher paused via admin");
                         }
                         AdminCommand::Resume => {
