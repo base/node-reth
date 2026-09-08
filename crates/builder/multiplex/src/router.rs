@@ -73,7 +73,7 @@ pub type ResolveFuture = std::pin::Pin<
     >,
 >;
 
-/// Router that cuts payload selection from flashblocks to basic after Beryl.
+/// Router that cuts payload selection from flashblocks to basic when Cobalt activates.
 #[derive(Debug)]
 pub struct MultiplexRouter {
     /// Flashblocks payload-builder handle.
@@ -84,7 +84,7 @@ pub struct MultiplexRouter {
     pub flashblocks_health: HealthState,
     /// Basic health state.
     pub basic_health: HealthState,
-    /// Chain spec that owns the upgrade activation conditions.
+    /// Chain spec that owns the Cobalt activation condition.
     pub chain_spec: Arc<BaseChainSpec>,
     /// Whether recent payload IDs are routed to the basic builder, ordered oldest first.
     pub payload_routes: VecDeque<(PayloadId, bool)>,
@@ -109,9 +109,9 @@ impl MultiplexRouter {
         }
     }
 
-    /// Returns whether a post-Beryl upgrade selects the basic builder at `timestamp`.
+    /// Returns whether Cobalt selects the basic builder at `timestamp`.
     pub fn basic_selected_at(&self, timestamp: u64) -> bool {
-        self.chain_spec.is_post_beryl_active_at_timestamp(timestamp)
+        self.chain_spec.is_cobalt_active_at_timestamp(timestamp)
     }
 
     /// Returns the recorded route for a payload, defaulting unknown payloads to flashblocks.
@@ -415,7 +415,7 @@ impl MultiplexRouter {
                     _ = events_tx.closed() => break,
                     result = flashblocks_events.recv(), if !flashblocks_closed => match result {
                         Ok(event) => {
-                            if !chain_spec.is_post_beryl_active_at_timestamp(Self::event_timestamp(&event)) {
+                            if !chain_spec.is_cobalt_active_at_timestamp(Self::event_timestamp(&event)) {
                                 let _ = events_tx.send(event);
                             }
                         }
@@ -439,7 +439,7 @@ impl MultiplexRouter {
                     },
                     result = basic_events.recv(), if !basic_closed => match result {
                         Ok(event) => {
-                            if chain_spec.is_post_beryl_active_at_timestamp(Self::event_timestamp(&event)) {
+                            if chain_spec.is_cobalt_active_at_timestamp(Self::event_timestamp(&event)) {
                                 let _ = events_tx.send(event);
                             }
                         }
@@ -530,7 +530,7 @@ mod tests {
     use std::time::Duration;
 
     use alloy_primitives::B256;
-    use base_common_genesis::{BaseUpgrade, RuntimeUpgradeRegistry};
+    use base_common_genesis::BaseUpgrade;
     use base_execution_chainspec::BaseChainSpecBuilder;
     use reth_ethereum_forks::ForkCondition;
     use reth_payload_builder::PayloadBuilderHandle;
@@ -629,86 +629,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn beryl_is_eligible_until_a_later_upgrade_boundary() {
-        let (mut router, _, _) = test_router();
-        router.chain_spec = Arc::new(
-            BaseChainSpecBuilder::base_mainnet()
-                .with_fork(BaseUpgrade::Beryl, ForkCondition::Timestamp(1))
-                .with_fork(BaseUpgrade::Cobalt, ForkCondition::Timestamp(10))
-                .with_fork(BaseUpgrade::Denim, ForkCondition::Never)
-                .with_fork(BaseUpgrade::Zenith, ForkCondition::Never)
-                .build(),
-        );
-
-        assert!(!router.basic_selected_at(9));
-        assert!(router.basic_selected_at(10));
-        assert!(router.basic_selected_at(11));
-    }
-
-    #[test]
-    fn runtime_post_beryl_activation_updates_existing_router() {
-        const CHAIN_ID: u64 = 9_777_101;
-        RuntimeUpgradeRegistry::clear_chain(CHAIN_ID);
-        let (mut router, _, _) = test_router();
-        router.chain_spec = Arc::new(
-            BaseChainSpecBuilder::base_mainnet()
-                .chain(CHAIN_ID.into())
-                .with_fork(BaseUpgrade::Cobalt, ForkCondition::Never)
-                .build(),
-        );
-        assert!(!router.basic_selected_at(10));
-
-        RuntimeUpgradeRegistry::set_activation_timestamp(CHAIN_ID, BaseUpgrade::Cobalt, 10);
-        assert!(router.basic_selected_at(10));
-        RuntimeUpgradeRegistry::clear_chain(CHAIN_ID);
-    }
-
-    #[test]
-    fn any_post_beryl_upgrade_selects_basic() {
-        for upgrade in [BaseUpgrade::Cobalt, BaseUpgrade::Denim, BaseUpgrade::Zenith] {
-            let (mut router, _, _) = test_router();
-            router.chain_spec = Arc::new(
-                BaseChainSpecBuilder::base_mainnet()
-                    .with_fork(BaseUpgrade::Cobalt, ForkCondition::Never)
-                    .with_fork(BaseUpgrade::Denim, ForkCondition::Never)
-                    .with_fork(BaseUpgrade::Zenith, ForkCondition::Never)
-                    .with_fork(upgrade, ForkCondition::Timestamp(10))
-                    .build(),
-            );
-            assert!(!router.basic_selected_at(9));
-            assert!(router.basic_selected_at(10));
-            assert!(router.basic_selected_at(11));
-        }
-    }
-
-    #[tokio::test]
-    async fn post_beryl_native_error_does_not_fall_back_to_flashblocks() {
-        let (mut router, mut flash_rx, mut basic_rx) = test_router();
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        let response = router.handle_build_new_payload(sample_input(COBALT_TIMESTAMP), tx);
-
-        let PayloadServiceCommand::BuildNewPayload(input, _, tx) =
-            flash_rx.recv().await.expect("flash shadow command")
-        else {
-            panic!("expected flash BuildNewPayload");
-        };
-        tx.send(Ok(input.payload_id())).expect("flash shadow response");
-        let PayloadServiceCommand::BuildNewPayload(_, _, tx) =
-            basic_rx.recv().await.expect("native build command")
-        else {
-            panic!("expected native BuildNewPayload");
-        };
-        tx.send(Err(PayloadBuilderError::MissingPayload)).expect("native response");
-        response.await;
-
-        assert!(matches!(
-            rx.await.expect("selected response"),
-            Err(PayloadBuilderError::MissingPayload)
-        ));
-        assert!(flash_rx.try_recv().is_err());
-    }
-
     #[tokio::test]
     async fn best_payload_reads_recorded_builder() {
         let (mut router, mut flash_rx, mut basic_rx) = test_router();
@@ -785,14 +705,6 @@ mod tests {
             MultiplexRouter::event_timestamp(&sub.recv().await.expect("receive flash event")),
             COBALT_TIMESTAMP - 1
         );
-
-        basic_events_tx
-            .send(Events::Attributes(sample_input(COBALT_TIMESTAMP - 1).attributes))
-            .expect("send rejected pre-Cobalt basic event");
-        flash_events_tx
-            .send(Events::Attributes(sample_input(COBALT_TIMESTAMP).attributes))
-            .expect("send rejected post-Cobalt flash event");
-        assert!(tokio::time::timeout(Duration::from_millis(50), sub.recv()).await.is_err());
 
         basic_events_tx
             .send(Events::Attributes(sample_input(COBALT_TIMESTAMP).attributes))
