@@ -6177,6 +6177,7 @@ dependencies = [
  "aws-sdk-s3",
  "base-reth-cli",
  "bollard",
+ "bytes",
  "clap",
  "futures",
  "human_bytes",
