@@ -10,7 +10,7 @@ use alloy_consensus::{
     Block, BlockBody, Header,
     transaction::{Recovered, SignerRecoverable},
 };
-use alloy_eips::{BlockNumberOrTag, Decodable2718};
+use alloy_eips::BlockNumberOrTag;
 use alloy_network::TransactionResponse;
 use alloy_primitives::{Address, BlockNumber};
 use alloy_rpc_types_eth::state::StateOverride;
@@ -624,7 +624,9 @@ where
                     .diff
                     .transactions
                     .iter()
-                    .map(|tx| BaseTxEnvelope::decode_2718_exact(tx.as_ref()))
+                    .map(|tx| {
+                        base_common_consensus::decode_2718_canonical::<BaseTxEnvelope>(tx.as_ref())
+                    })
                     .collect::<std::result::Result<_, _>>()
                     .map_err(|e| ExecutionError::BlockConversion(e.to_string()))?,
                 ..Default::default()
