@@ -2218,7 +2218,7 @@ mod tests {
         evicted: Arc<Mutex<Vec<TxHash>>>,
         invalid: Arc<Mutex<Vec<(Address, u64)>>>,
     ) -> BuildOutcomeKind<crate::BaseBuiltPayload<BasePrimitives>> {
-        let mut ctx = pool_payload_context(DENIM_TIMESTAMP - 1);
+        let mut ctx = pool_payload_context(COBALT_TIMESTAMP - 1);
         ctx.builder_config.resource_metering = resource_metering;
         let transactions = RecordingTransactions { transactions: txs.into_iter(), invalid };
         build_pool_payload_with(ctx, transactions, move |hashes| {
@@ -2392,7 +2392,7 @@ mod tests {
                 tx_hash,
                 meter_for(tx_hash, 21_000),
             )]))));
-        let mut ctx = pool_payload_context(DENIM_TIMESTAMP - 1);
+        let mut ctx = pool_payload_context(COBALT_TIMESTAMP - 1);
         ctx.builder_config.resource_metering =
             metering_config(cpu_schedule(1_000_000, Some(100), false), provider);
         let cache = ctx.builder_config.rejection_cache.clone();
@@ -2408,7 +2408,7 @@ mod tests {
 
         // Later job: the tx is in the iterator again (P2P re-insert). Metering is
         // fail-open without a sample, so a skip must come from the shared cache.
-        let mut ctx = pool_payload_context(DENIM_TIMESTAMP - 1);
+        let mut ctx = pool_payload_context(COBALT_TIMESTAMP - 1);
         ctx.builder_config.rejection_cache = cache;
         ctx.builder_config.resource_metering = metering_config(
             cpu_schedule(1_000_000, Some(100), false),
@@ -2428,7 +2428,7 @@ mod tests {
         let first = pool_transaction(0);
         let second = pool_transaction(1);
         let second_hash = *second.hash();
-        let mut ctx = pool_payload_context(DENIM_TIMESTAMP - 1);
+        let mut ctx = pool_payload_context(COBALT_TIMESTAMP - 1);
         ctx.builder_config.resource_metering =
             metering_config(cpu_schedule(30_000, None, false), Arc::new(NoopMeteringProvider));
         let cache = ctx.builder_config.rejection_cache.clone();
@@ -2458,7 +2458,7 @@ mod tests {
                 tx_hash,
                 meter_for(tx_hash, 21_000),
             )]))));
-        let mut ctx = pool_payload_context(DENIM_TIMESTAMP - 1);
+        let mut ctx = pool_payload_context(COBALT_TIMESTAMP - 1);
         ctx.builder_config.resource_metering =
             metering_config(cpu_schedule(1_000_000, Some(100), true), provider);
         let cache = ctx.builder_config.rejection_cache.clone();
@@ -2481,7 +2481,7 @@ mod tests {
                 tx_hash,
                 overflowing_meter(tx_hash),
             )]))));
-        let mut ctx = pool_payload_context(DENIM_TIMESTAMP - 1);
+        let mut ctx = pool_payload_context(COBALT_TIMESTAMP - 1);
         ctx.builder_config.resource_metering = metering_config(overflowing_schedule(), provider);
         let cache = ctx.builder_config.rejection_cache.clone();
 
@@ -2575,7 +2575,7 @@ mod tests {
                 sequencer_hash,
                 meter_with_sstore(sequencer_hash, 21_000, 3),
             )]))));
-        let mut ctx = pool_payload_context(DENIM_TIMESTAMP - 1);
+        let mut ctx = pool_payload_context(COBALT_TIMESTAMP - 1);
         ctx.config.attributes.transactions = vec![sequencer_attribute_tx(&sequencer)];
         // Sequencer cost is 21_000 + 3 * 10_000 = 51_000, which exceeds block_limit.
         // Mempool cost is ~21_000, which would fit an empty block.
@@ -2610,7 +2610,7 @@ mod tests {
     fn executed_throttle_discards_state_and_usage() {
         let tx = pool_transaction(0);
         let sender = tx.sender();
-        let mut ctx = pool_payload_context(DENIM_TIMESTAMP - 1);
+        let mut ctx = pool_payload_context(COBALT_TIMESTAMP - 1);
         ctx.builder_config.resource_metering = metering_config(
             cpu_schedule(1_000_000, Some(100), false),
             Arc::new(NoopMeteringProvider),
