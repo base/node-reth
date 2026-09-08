@@ -689,6 +689,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn local_cobalt_schedule_mismatch_is_returned_to_caller() {
+        let client = test_client();
+        let mut state = TestEngineStateBuilder::new().build();
+        let envelope = BaseExecutionPayloadEnvelope {
+            parent_beacon_block_root: None,
+            execution_payload: cobalt_payload(2, 3, 200),
+        };
+
+        let error = InsertTask::new(
+            Arc::clone(&client),
+            cobalt_config(),
+            envelope,
+            InsertPayloadSafety::Unsafe,
+        )
+        .execute(&mut state)
+        .await
+        .unwrap_err();
+
+        assert!(matches!(error, InsertTaskError::InvalidBaseTimeSchedule(_)));
+        assert!(client.last_new_payload_v2().await.is_none());
+    }
+
+    #[tokio::test]
     async fn stale_unsafe_payload_is_dropped_before_schedule_validation() {
         let client = test_client();
         let current_unsafe = l2_block_info(4, B256::with_last_byte(4), B256::with_last_byte(3));
