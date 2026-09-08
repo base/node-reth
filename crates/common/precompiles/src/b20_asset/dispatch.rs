@@ -530,12 +530,16 @@ impl<'a> DecodedAnnounce<'a> {
     ///
     /// Returns `Some` when the leading 4 bytes are the `announce` selector, the surface active at
     /// `version` still declares it dialable, and the rest borrowed-decodes cleanly against alloy's
-    /// `decode_sequence + type_check`. That combination is exactly what alloy's owned
+    /// `decode_sequence + valid_token`. That combination is exactly what alloy's owned
     /// `abi_decode_validate` runs, minus the infallible `detokenize` (the step that copies), so the
-    /// accept-set matches the owned path. `type_check` is required, not optional: `string`
+    /// accept-set matches the owned path. `valid_token` is required, not optional: `string`
     /// validation rejects non-UTF-8, and skipping it would accept an `id`/`description`/`uri` the
     /// owned path rejects — a divergence the caller's fall-through to the owned decoder could not
-    /// catch. `valid_selector` future-proofs a fork that drops `announce`.
+    /// catch. Checking `valid_token` directly (rather than `type_check`, which wraps the same
+    /// predicate) avoids building and discarding alloy's `Err`, whose construction re-ABI-encodes
+    /// the entire token — including every `bytes[]` alias — purely to populate a diagnostic no one
+    /// reads here (Cantina #16 follow-up). `valid_selector` future-proofs a fork that drops
+    /// `announce`.
     fn try_from_calldata(calldata: &'a [u8], version: AssetVersion) -> Option<Self> {
         let selector = calldata.first_chunk::<4>().copied()?;
         if selector != IB20Asset::announceCall::SELECTOR {
@@ -547,8 +551,10 @@ impl<'a> DecodedAnnounce<'a> {
         let rest = &calldata[4..];
         let token =
             abi::decode_sequence::<<IB20Asset::announceCall as SolCall>::Token<'a>>(rest).ok()?;
-        <<IB20Asset::announceCall as SolCall>::Parameters<'a> as SolType>::type_check(&token)
-            .ok()?;
+        if !<<IB20Asset::announceCall as SolCall>::Parameters<'a> as SolType>::valid_token(&token)
+        {
+            return None;
+        }
         // Field `.0` of `PackedSeqToken<'a>` is `&'a [u8]`, so each iter yields a slice with the
         // full calldata lifetime. `as_slice()` would tie borrows to `token` (a local) instead.
         Some(Self {
@@ -1096,6 +1102,12 @@ mod tests {
         let at = poison_at(&non_utf8_uri, b"uri-value");
         non_utf8_uri[at..at + 9].fill(0xff);
 
+        // Cantina #16 follow-up: a `type_check` rejection on an aliased payload must reject exactly
+        // like a non-aliased one, not fall through with different error bytes.
+        let mut non_utf8_aliased_id = aliased_announce_calldata(128, &inner);
+        let at = poison_at(&non_utf8_aliased_id, b"aliased-id");
+        non_utf8_aliased_id[at..at + 10].fill(0xff);
+
         let mut trailing_garbage = one_element.clone();
         trailing_garbage.extend_from_slice(&[0u8; 16]);
 
@@ -1111,6 +1123,7 @@ mod tests {
             ("non-UTF-8 in id", non_utf8_id, false),
             ("non-UTF-8 in description", non_utf8_desc, false),
             ("non-UTF-8 in uri", non_utf8_uri, false),
+            ("aliased offsets with non-UTF-8 id", non_utf8_aliased_id, false),
             // alloy follows absolute offsets, so bytes past the last tail get ignored. The oracle
             // accepts, and the fast path must match. This row pins that parity.
             ("trailing garbage after valid payload", trailing_garbage, true),
