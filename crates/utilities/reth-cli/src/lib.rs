@@ -15,6 +15,7 @@ pub use snapshots::Snapshots;
 
 mod snapshot_manifest;
 pub use snapshot_manifest::{
-    ChunkFilename, ChunkedArchive, ComponentManifest, ManifestGenerationParams, OutputFileChecksum,
-    SingleArchive, SnapshotGenerator, SnapshotManifest, SnapshotManifestExt,
+    ChunkFilename, ChunkedArchive, ComponentManifest, DirectoryArchiveSink,
+    ManifestGenerationParams, OutputFileChecksum, SingleArchive, SnapshotArchiveSink,
+    SnapshotArchiveWriter, SnapshotGenerator, SnapshotManifest, SnapshotManifestExt,
 };
