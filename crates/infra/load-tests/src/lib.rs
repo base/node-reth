@@ -2,6 +2,9 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
+mod acceptance;
+pub use acceptance::{AcceptanceCriteria, AcceptanceReport};
+
 mod config;
 pub use config::{
     OsakaTarget, PrecompileTarget, PredicateAddressConfig, PredicateSlotConfig,

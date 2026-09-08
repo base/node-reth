@@ -156,6 +156,9 @@ impl LoadTestExecutor {
     where
         F: FnOnce(&MetricsSummary),
     {
+        if options.continuous && test_config.acceptance.is_some() {
+            return Err(BaselineError::Config("acceptance cannot run in continuous mode".into()));
+        }
         let load_config =
             if options.continuous { load_config.with_continuous() } else { load_config };
         let setup = LoadTestSetupAmounts {
@@ -177,7 +180,7 @@ impl LoadTestExecutor {
             .then(|| Self::install_signal_handler(runner.stop_flag()));
 
         let run_result = Self::run_phases(&mut runner, &funding_key, setup, hooks.display).await;
-        let (summary, run_error) = match run_result {
+        let (mut summary, mut run_error) = match run_result {
             Ok(summary) => (summary, None),
             Err(error) => {
                 // Prefer stats the runner already collected before failing (e.g. an
@@ -191,6 +194,14 @@ impl LoadTestExecutor {
                 (summary, Some(error))
             }
         };
+
+        if let Some(criteria) = &test_config.acceptance {
+            let report = criteria.evaluate(&summary);
+            if !report.passed && run_error.is_none() {
+                run_error = Some(BaselineError::Workload("acceptance gates failed".into()));
+            }
+            summary.acceptance = Some(report);
+        }
 
         // Cleanup must run even if the caller hook panics, or funded accounts can leak ETH.
         runner.set_display_stage(LoadTestStage::Cleanup);

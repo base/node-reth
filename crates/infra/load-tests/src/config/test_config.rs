@@ -12,6 +12,7 @@ use super::{
     validity::ValidityConfig,
 };
 use crate::{
+    AcceptanceCriteria,
     metrics::ConfigSummary,
     rpc::MAX_BATCH_RPC_SIZE,
     runner::{TxConfig, TxType},
@@ -97,6 +98,9 @@ pub struct TestConfig {
     #[serde(default = "default_block_time")]
     pub block_time: String,
 
+    /// Optional finite-run acceptance thresholds, evaluated after receipt enrichment.
+    pub acceptance: Option<AcceptanceCriteria>,
+
     /// Seed for deterministic account generation (used if mnemonic not provided).
     ///
     /// Defaults to `12345` for reproducible single-run testing and fund recovery. Concurrent runs
@@ -174,6 +178,7 @@ impl Default for TestConfig {
             measurement_blocks: None,
             target_gps: Some(20_000_000),
             block_time: default_block_time(),
+            acceptance: None,
             seed: 12345,
             chain_id: None,
             transactions: vec![WeightedTxType { weight: 100, tx_type: TxTypeConfig::Transfer }],
@@ -207,6 +212,7 @@ impl fmt::Debug for TestConfig {
             .field("measurement_blocks", &self.measurement_blocks)
             .field("target_gps", &self.target_gps)
             .field("block_time", &self.block_time)
+            .field("acceptance", &self.acceptance)
             .field("seed", &self.seed)
             .field("chain_id", &self.chain_id)
             .field("transactions", &self.transactions)
@@ -472,6 +478,12 @@ impl TestConfig {
             return Err(BaselineError::Config("block_time must be > 0".into()));
         }
 
+        if let Some(acceptance) = &self.acceptance {
+            acceptance.validate()?;
+            if self.parse_duration()?.is_none() && self.measurement_blocks.is_none() {
+                return Err(BaselineError::Config("acceptance requires a finite run".into()));
+            }
+        }
         self.validity.validate()?;
 
         Ok(())
@@ -842,6 +854,41 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cobalt_profile_preserves_gas_per_second_and_enables_acceptance() {
+        let baseline = TestConfig::from_yaml(include_str!("../../examples/devnet.yaml")).unwrap();
+        let config =
+            TestConfig::from_yaml(include_str!("../../examples/cobalt-devnet.yaml")).unwrap();
+        let load = config.to_load_config(Some(1337)).unwrap();
+
+        assert_eq!(load.block_time, Duration::from_millis(200));
+        assert_eq!(load.target_gps, baseline.target_gps);
+        assert_eq!(
+            serde_json::to_value(&config.transactions).unwrap(),
+            serde_json::to_value(&baseline.transactions).unwrap()
+        );
+        assert_eq!(load.target_gps.unwrap() as f64 * load.block_time.as_secs_f64(), 4_000_000.0);
+        assert!(load.flashblocks_ws.is_none());
+        assert!(load.txpool_nodes.is_empty());
+        assert!(config.acceptance.is_some());
+        assert!(baseline.acceptance.is_none());
+    }
+
+    #[test]
+    fn acceptance_rejects_invalid_or_unknown_thresholds_and_continuous_runs() {
+        let yaml = include_str!("../../examples/cobalt-devnet.yaml");
+        for (from, to) in [
+            ("min_gps: 18000000", "min_gps: 0"),
+            ("min_blocks: 125", "min_blocks: 0"),
+            ("max_block_latency_p95_ms: 1000", "max_block_latency_p95_ms: 0"),
+            ("max_availability_lag_p95_ms: 100", "max_availability_lag_p95_ms: 0"),
+            ("min_gps:", "minimum_gps:"),
+            ("duration: \"30s\"", "duration: null"),
+        ] {
+            assert!(TestConfig::from_yaml(&yaml.replace(from, to)).is_err(), "{from} → {to}");
+        }
+    }
 
     #[test]
     fn parse_minimal_config() {
