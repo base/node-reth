@@ -567,8 +567,7 @@ impl<'a> DecodedAnnounce<'a> {
         let rest = &calldata[4..];
         let token =
             abi::decode_sequence::<<IB20Asset::announceCall as SolCall>::Token<'a>>(rest).ok()?;
-        if !<<IB20Asset::announceCall as SolCall>::Parameters<'a> as SolType>::valid_token(&token)
-        {
+        if !<<IB20Asset::announceCall as SolCall>::Parameters<'a> as SolType>::valid_token(&token) {
             return match version {
                 // V1/Beryl: revert bytes are already consensus-frozen — keep falling through to
                 // the owned decoder's diagnostic, however expensive, unchanged.
