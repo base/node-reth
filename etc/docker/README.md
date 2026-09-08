@@ -116,12 +116,6 @@ image and arguments; Compose extends only the selected service, never both.
 Direct Compose commands with `--env-file etc/docker/devnet-env` also honor the
 setting; direct Bake commands need it exported in the shell.
 
-Check configuration without building images or starting a devnet:
-
-```bash
-python3 etc/scripts/devnet/test-batcher-config.py
-```
-
 ### Single-Anvil L1 local Nitro proving
 
 The optional single-Anvil variant replaces the Reth execution node and both
