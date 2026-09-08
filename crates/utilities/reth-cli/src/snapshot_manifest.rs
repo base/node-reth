@@ -747,8 +747,12 @@ struct CountingWriter<W> {
     bytes_written: u64,
 }
 
+/// Tar builder that writes Zstandard-compressed bytes to a snapshot archive sink.
+type SnapshotArchiveBuilder<'a> =
+    tar::Builder<zstd::Encoder<'a, CountingWriter<Box<dyn SnapshotArchiveWriter>>>>;
+
 impl<W> CountingWriter<W> {
-    fn new(inner: W) -> Self {
+    const fn new(inner: W) -> Self {
         Self { inner, bytes_written: 0 }
     }
 
@@ -777,10 +781,7 @@ fn compute_output_files_for_planned_files(
 
 fn compute_output_files_and_archive(
     files: &[PlannedFile],
-    mut archive: Option<(
-        &mut tar::Builder<zstd::Encoder<'_, CountingWriter<Box<dyn SnapshotArchiveWriter>>>>,
-        &str,
-    )>,
+    mut archive: Option<(&mut SnapshotArchiveBuilder<'_>, &str)>,
 ) -> Result<Vec<OutputFileChecksum>> {
     let mut output_files = Vec::with_capacity(files.len());
     for planned in files {
