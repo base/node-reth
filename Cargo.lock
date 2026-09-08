@@ -5985,6 +5985,7 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "blake3",
+ "humantime",
  "rayon",
  "reth-cli-commands",
  "reth-node-core",
@@ -6181,8 +6182,6 @@ dependencies = [
  "bollard",
  "clap",
  "futures",
- "human_bytes",
- "humantime",
  "serde_json",
  "serial_test",
  "tempfile",
