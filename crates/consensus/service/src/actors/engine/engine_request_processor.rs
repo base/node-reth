@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use alloy_eips::BlockNumberOrTag;
+use base_common_consensus::BaseTxEnvelope;
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_consensus_derive::{ResetSignal, Signal};
@@ -9,7 +10,7 @@ use base_consensus_engine::{
     EngineTaskErrorSeverity, EngineTaskErrors, FinalizeTask, ForkchoiceCheckpointLabel,
     ForkchoiceCheckpointReader, InsertTask, InsertTaskResult, NoopForkchoiceCheckpointReader,
 };
-use base_protocol::L2BlockInfo;
+use base_protocol::{BaseTimeUpdateTx, L2BlockInfo};
 use tokio::{sync::mpsc, task::JoinHandle};
 
 use crate::{
@@ -359,16 +360,7 @@ where
         self.engine.enqueue(task);
     }
 
-    /// Enqueues an externally received unsafe payload for serialized insertion.
-    pub fn enqueue_gossip_payload_insert(&mut self, envelope: BaseExecutionPayloadEnvelope) {
-        self.engine.enqueue(EngineTask::Insert(Box::new(InsertTask::gossip_payload(
-            Arc::clone(&self.client),
-            Arc::clone(&self.rollup),
-            envelope,
-        ))));
-    }
-
-    /// Enqueues an externally received unsafe payload.
+    /// Enqueues an unsafe payload already validated at ingress.
     pub fn handle_external_unsafe_l2_block(&mut self, envelope: BaseExecutionPayloadEnvelope) {
         info!(
             target: "engine",
@@ -383,7 +375,7 @@ where
             self.rollup
                 .l2_block_timestamp(envelope.execution_payload.block_number().saturating_sub(1)),
         );
-        self.enqueue_gossip_payload_insert(envelope);
+        self.enqueue_unsafe_payload_insert(envelope, None);
     }
 
     /// Applies inputs already validated and selected by a shadow reconciliation gate.
@@ -460,6 +452,24 @@ where
 
     /// Handles an unsafe payload supplied through the admin API.
     pub fn handle_admin_unsafe_l2_block(&mut self, envelope: BaseExecutionPayloadEnvelope) {
+        // Admin injection bypasses gossip validation. Leave conversion errors to InsertTask,
+        // but drop invalid schedules at ingress just as the gossip handler does.
+        if let Ok(block) = envelope.execution_payload.clone().try_into_block::<BaseTxEnvelope>()
+            && let Err(error) = BaseTimeUpdateTx::validate_block_timestamp(
+                &self.rollup,
+                &block.body.transactions,
+                block.header.number,
+                block.header.timestamp,
+            )
+        {
+            warn!(
+                target: "engine",
+                %error,
+                block_number = block.header.number,
+                "Dropping admin payload with invalid BaseTime schedule"
+            );
+            return;
+        }
         self.handle_external_unsafe_l2_block(envelope);
     }
 
@@ -691,7 +701,7 @@ mod tests {
             test_engine_client_builder,
         },
     };
-    use base_protocol::{BlockInfo, L1BlockInfoBedrock, L2BlockInfo};
+    use base_protocol::{BaseTimeUpdateTx, BlockInfo, L1BlockInfoBedrock, L2BlockInfo};
     use rstest::rstest;
     use tokio::sync::{mpsc, watch};
 
@@ -817,8 +827,17 @@ mod tests {
         (EngineProcessor::new(client, config, derivation_client, engine), queue_rx)
     }
 
+    #[rstest]
+    #[case::wrong_second(3, Some(200), false)]
+    #[case::wrong_slot(2, Some(400), false)]
+    #[case::missing_metadata(2, None, false)]
+    #[case::valid(2, Some(200), true)]
     #[tokio::test]
-    async fn only_external_payloads_drop_invalid_cobalt_schedules() {
+    async fn admin_payload_schedule_is_checked_before_enqueue(
+        #[case] timestamp: u64,
+        #[case] millis: Option<u16>,
+        #[case] valid: bool,
+    ) {
         let config = RollupConfig {
             block_time: 2,
             upgrades: UpgradeConfig {
@@ -832,17 +851,35 @@ mod tests {
         let BaseExecutionPayload::V1(payload) = &mut envelope.execution_payload else {
             unreachable!();
         };
-        payload.timestamp = 3;
+        payload.timestamp = timestamp;
         payload.transactions = vec![l1_info_deposit_tx_bytes().into()];
+        if let Some(millis) = millis {
+            payload.transactions.push(
+                BaseTxEnvelope::from(BaseTimeUpdateTx::new(millis).unwrap().into_deposit_tx(2))
+                    .encoded_2718()
+                    .into(),
+            );
+        }
 
-        let (mut local, _) = unsafe_payload_processor(true, unsafe_head, None, config.clone());
-        local.handle_local_unsafe_l2_block(envelope.clone(), None);
-        let error = local.engine.drain().await.unwrap_err();
-        assert_eq!(error.severity(), EngineTaskErrorSeverity::Critical);
+        if !valid {
+            let (mut local, _) = unsafe_payload_processor(true, unsafe_head, None, config.clone());
+            local.handle_local_unsafe_l2_block(envelope.clone(), None);
+            let error = local.engine.drain().await.unwrap_err();
+            assert_eq!(error.severity(), EngineTaskErrorSeverity::Critical);
+            assert!(local.client.last_new_payload_v2().await.is_none());
+        }
 
-        let (mut external, _) = unsafe_payload_processor(true, unsafe_head, None, config);
-        external.handle_external_unsafe_l2_block(envelope);
-        external.engine.drain().await.unwrap();
+        let (mut admin, queue_rx) = unsafe_payload_processor(true, unsafe_head, None, config);
+        admin.client.set_new_payload_v2_response(valid_fcu().payload_status).await;
+        admin.client.set_fork_choice_updated_v3_response(valid_fcu()).await;
+        admin.handle_admin_unsafe_l2_block(envelope);
+        assert_eq!(*queue_rx.borrow(), usize::from(valid));
+        admin.engine.drain().await.unwrap();
+        assert_eq!(admin.client.last_new_payload_v2().await.is_some(), valid);
+        assert_eq!(
+            admin.engine_state().sync_state.unsafe_head().block_info.number,
+            if valid { 2 } else { 1 }
+        );
     }
 
     #[rstest]
@@ -977,7 +1014,7 @@ mod tests {
                 .block_number()
                 .checked_sub(unsafe_head.block_info.number);
             if block_gap.is_some_and(|gap| gap > 0 && gap <= 300) {
-                processor.enqueue_gossip_payload_insert(envelope);
+                processor.enqueue_unsafe_payload_insert(envelope, None);
             }
         } else {
             processor.handle_external_unsafe_l2_block(envelope);

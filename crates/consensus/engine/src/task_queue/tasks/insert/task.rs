@@ -84,8 +84,6 @@ pub struct InsertTask<EngineClient_: EngineClient> {
     payload_safety: InsertPayloadSafety,
     /// Whether the payload must extend the current unsafe chain.
     payload_policy: InsertPayloadPolicy,
-    /// Whether an invalid unsafe schedule should be dropped instead of surfaced to the caller.
-    drop_invalid_schedule: bool,
     /// Optional response channel used by callers that need insertion acknowledgement.
     result_tx: Option<mpsc::Sender<InsertTaskResult>>,
 }
@@ -104,7 +102,6 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
             envelope,
             payload_safety,
             payload_policy: InsertPayloadPolicy::ExtendingOnly,
-            drop_invalid_schedule: false,
             result_tx: None,
         }
     }
@@ -116,23 +113,6 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
         envelope: BaseExecutionPayloadEnvelope,
     ) -> Self {
         Self::new(client, rollup_config, envelope, InsertPayloadSafety::Unsafe)
-    }
-
-    /// Creates a task that drops an unsafe gossip payload with an invalid schedule.
-    pub const fn gossip_payload(
-        client: Arc<EngineClient_>,
-        rollup_config: Arc<RollupConfig>,
-        envelope: BaseExecutionPayloadEnvelope,
-    ) -> Self {
-        Self {
-            client,
-            rollup_config,
-            envelope,
-            payload_safety: InsertPayloadSafety::Unsafe,
-            payload_policy: InsertPayloadPolicy::ExtendingOnly,
-            drop_invalid_schedule: true,
-            result_tx: None,
-        }
     }
 
     /// Creates a new task to insert an unsafe payload and send insertion acknowledgement.
@@ -148,7 +128,6 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
             envelope,
             payload_safety: InsertPayloadSafety::Unsafe,
             payload_policy: InsertPayloadPolicy::ExtendingOnly,
-            drop_invalid_schedule: false,
             result_tx: Some(result_tx),
         }
     }
@@ -165,7 +144,6 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
             envelope,
             payload_safety: InsertPayloadSafety::Unsafe,
             payload_policy: InsertPayloadPolicy::Authoritative,
-            drop_invalid_schedule: false,
             result_tx: None,
         }
     }
@@ -395,11 +373,6 @@ impl<EngineClient_: EngineClient> EngineTaskExt for InsertTask<EngineClient_> {
         let result = self.execute_with_result(state).await;
         if self.result_tx.is_some() {
             self.send_channel_result(result).await;
-            Ok(())
-        } else if self.drop_invalid_schedule
-            && matches!(&result, Err(InsertTaskError::InvalidBaseTimeSchedule(_)))
-        {
-            warn!(target: "engine", "Dropping unsafe payload with invalid BaseTime schedule");
             Ok(())
         } else {
             result.map(|_| ())
@@ -711,23 +684,6 @@ mod tests {
                 InsertTaskError::InvalidBaseTimeSchedule(actual) if *actual == expected_error
             ));
         }
-
-        assert!(client.last_new_payload_v2().await.is_none());
-    }
-
-    #[tokio::test]
-    async fn unsafe_cobalt_schedule_mismatch_is_dropped_without_retry() {
-        let client = test_client();
-        let mut state = TestEngineStateBuilder::new().build();
-        let envelope = BaseExecutionPayloadEnvelope {
-            parent_beacon_block_root: None,
-            execution_payload: cobalt_payload(2, 3, 200),
-        };
-
-        InsertTask::gossip_payload(Arc::clone(&client), cobalt_config(), envelope)
-            .execute(&mut state)
-            .await
-            .expect("invalid unsafe payload should be dropped");
 
         assert!(client.last_new_payload_v2().await.is_none());
     }
