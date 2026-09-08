@@ -42,7 +42,9 @@ impl NonceManagerSlots {
     /// `nonces[account][nonce_key]`, or `None` for the reserved protocol nonce key
     /// (`0`), which lives in account state.
     ///
-    /// Two nested Solidity mappings, `nonce_key => (account => base)`, each slot
+    /// Two nested Solidity mappings, `account => (nonce_key => base)` (outer key
+    /// `account`, inner key `nonce_key`, matching the reference
+    /// `mapping(address => mapping(uint256 => u64))`), each slot
     /// `keccak256(pad32(key) ++ be32(slot))`.
     #[must_use]
     pub fn nonce_slot(account: Address, nonce_key: U256) -> Option<U256> {

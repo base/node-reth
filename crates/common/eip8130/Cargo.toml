@@ -28,8 +28,4 @@ alloy-sol-types.workspace = true
 
 [features]
 default = [ "std" ]
-std = [
-	"alloy-primitives/std",
-	"base-common-consensus/std",
-	"thiserror/std",
-]
+std = [ "alloy-primitives/std", "base-common-consensus/std", "thiserror/std" ]

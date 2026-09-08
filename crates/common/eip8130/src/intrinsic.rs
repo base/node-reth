@@ -593,8 +593,10 @@ impl IntrinsicGas {
     /// `expiry`, `scope`) then the `policyData` offset word, and the `policyData`
     /// `(length, data)` tail lives at that offset. This **follows the offset
     /// pointer** rather than assuming the canonical `0xA0`, so the length read
-    /// here is exactly the one [`AccountChangeApplier::decode_authorize`] reads:
-    /// the metering can never disagree with execution on the danger direction
+    /// here is exactly the one the revm apply path's `AccountChangeApplier::decode_authorize`
+    /// reads (the `authorize_attaches_policy_agrees_with_apply_decode` test in
+    /// `base-execution-eip8130` pins this): the metering can never disagree with
+    /// execution on the danger direction
     /// (metering "no policy" while a 52-byte policy is written). A payload whose
     /// pointer is out of range is metered as no policy — the validating decoder
     /// rejects it and the transaction reverts regardless.
