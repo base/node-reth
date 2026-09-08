@@ -191,6 +191,7 @@ fn validator_command(beacon_endpoint: &str) -> Vec<String> {
         format!("--datadir={LIGHTHOUSE_VALIDATOR_DATA_DIR}"),
         format!("--beacon-nodes={beacon_endpoint}"),
         "--init-slashing-protection".to_string(),
+        "--suggested-fee-recipient=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266".to_string(),
     ]
 }
 

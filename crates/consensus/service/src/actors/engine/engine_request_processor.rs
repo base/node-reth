@@ -8,18 +8,20 @@ use base_consensus_engine::{
     ConsolidateTask, Engine, EngineClient, EngineSyncStateUpdate, EngineTask, EngineTaskError,
     EngineTaskErrorSeverity, EngineTaskErrors, FinalizeTask, ForkchoiceCheckpointLabel,
     ForkchoiceCheckpointReader, InsertTask, InsertTaskResult, NoopForkchoiceCheckpointReader,
+    SealTaskError,
 };
 use base_protocol::L2BlockInfo;
+use opentelemetry::context::FutureExt as OtelFutureExt;
 use tokio::{sync::mpsc, task::JoinHandle};
 
 use crate::{
-    CheckpointWriter, EngineActorRequest, EngineClientError, EngineDerivationClient, EngineError,
-    NoopCheckpointWriter, actors::sequencer::CanonicalReconciliationInputs,
+    BuildRequest, CheckpointWriter, EngineActorRequest, EngineClientError, EngineDerivationClient,
+    EngineError, GetPayloadRequest, NoopCheckpointWriter,
+    actors::sequencer::CanonicalReconciliationInputs,
 };
 
-/// Requires that the implementor handles engine requests via the provided channel.
-/// Note: this exists to facilitate unit testing rather than consolidate multiple implementations
-/// under a well-thought-out interface.
+/// Transfers ownership of serialized engine processing to a task.
+/// Validators run the processor directly; sequencers add ownership and catch-up coordination.
 pub trait EngineRequestReceiver: Send + Sync {
     /// Starts a task to handle engine processing requests.
     fn start(
@@ -81,6 +83,55 @@ where
     EngineClient_: EngineClient + 'static,
     DerivationClient: EngineDerivationClient + 'static,
 {
+    /// Starts a build and acknowledges its result before handling an engine-task error.
+    pub async fn process_build_request(
+        &mut self,
+        request: BuildRequest,
+    ) -> Result<ResetOutcome, EngineError> {
+        let result = self
+            .engine
+            .build(Arc::clone(&self.client), Arc::clone(&self.rollup), request.attributes)
+            .with_context(request.otel_cx)
+            .await;
+        let error = result.as_ref().err().map(|error| (error.severity(), format!("{error:?}")));
+        request.result_tx.send(result).await.map_err(|_| EngineError::ChannelClosed)?;
+        match error {
+            Some((severity, error)) => {
+                self.handle_engine_task_error_severity(severity, error).await
+            }
+            None => Ok(ResetOutcome::NotReset),
+        }
+    }
+
+    /// Seals a build and acknowledges its result before handling an engine-task error.
+    pub async fn process_get_payload_request(
+        &mut self,
+        request: GetPayloadRequest,
+    ) -> Result<ResetOutcome, EngineError> {
+        let result = self
+            .engine
+            .get_payload(
+                Arc::clone(&self.client),
+                Arc::clone(&self.rollup),
+                request.payload_id,
+                request.attributes,
+            )
+            .with_context(request.otel_cx)
+            .await;
+        let error = result.as_ref().err().map(|error| (error.severity(), format!("{error:?}")));
+        request
+            .result_tx
+            .send(result)
+            .await
+            .map_err(|error| EngineTaskErrors::Seal(SealTaskError::MpscSend(Box::new(error))))?;
+        match error {
+            Some((severity, error)) => {
+                self.handle_engine_task_error_severity(severity, error).await
+            }
+            None => Ok(ResetOutcome::NotReset),
+        }
+    }
+
     /// Returns the engine client's shared handle.
     pub const fn client(&self) -> &Arc<EngineClient_> {
         &self.client
@@ -679,8 +730,8 @@ mod tests {
     use base_consensus_derive::Signal;
     use base_consensus_engine::{
         ConsolidateInput, Engine, EngineClient, EngineState, EngineTaskError,
-        EngineTaskErrorSeverity, ForkchoiceCheckpointError, ForkchoiceCheckpointLabel,
-        ForkchoiceCheckpointReader,
+        EngineTaskErrorSeverity, EngineTaskErrors, ForkchoiceCheckpointError,
+        ForkchoiceCheckpointLabel, ForkchoiceCheckpointReader, SealTaskError,
         test_utils::{
             TestAttributesBuilder, TestEngineStateBuilder, test_block_info,
             test_engine_client_builder,
@@ -691,10 +742,10 @@ mod tests {
     use tokio::sync::{mpsc, watch};
 
     use crate::{
-        BuildRequest, EngineActorRequest, EngineClientError, EngineProcessor,
-        EngineRequestReceiver, MockConductor, NodeMode, NoopCheckpointWriter, ResetRequest,
-        SequencerEngineRequestCoordinator, SequencerEngineState, ShadowReconciliationGate,
-        ValidatorEngineRequestHandler, actors::engine::client::MockEngineDerivationClient,
+        BuildRequest, EngineActorRequest, EngineClientError, EngineError, EngineProcessor,
+        EngineRequestReceiver, GetPayloadRequest, MockConductor, NodeMode, NoopCheckpointWriter,
+        ResetRequest, SequencerEngineRequestCoordinator, SequencerEngineState,
+        ShadowReconciliationGate, actors::engine::client::MockEngineDerivationClient,
     };
 
     /// Test-only [`ForkchoiceCheckpointReader`] that returns pre-seeded safe/finalized heads.
@@ -1514,7 +1565,7 @@ mod tests {
         );
 
         let (req_tx, req_rx) = mpsc::channel(8);
-        let handle = ValidatorEngineRequestHandler::new(processor).start(req_rx);
+        let handle = processor.start(req_rx);
 
         // Close the channel so the task exits after bootstrap + one drain.
         drop(req_tx);
@@ -1576,7 +1627,7 @@ mod tests {
         );
 
         let (req_tx, req_rx) = mpsc::channel(8);
-        let handle = ValidatorEngineRequestHandler::new(processor).start(req_rx);
+        let handle = processor.start(req_rx);
 
         // Close the channel so the task exits after bootstrap + one drain.
         drop(req_tx);
@@ -1681,7 +1732,7 @@ mod tests {
             EngineProcessor::new(Arc::clone(&client), Arc::clone(&cfg), mock_derivation, engine);
 
         let (req_tx, req_rx) = mpsc::channel(8);
-        let handle = ValidatorEngineRequestHandler::new(processor).start(req_rx);
+        let handle = processor.start(req_rx);
 
         drop(req_tx);
         let _ = handle.await;
@@ -1983,7 +2034,7 @@ mod tests {
         let processor =
             EngineProcessor::new(Arc::clone(&client), Arc::clone(&cfg), mock_derivation, engine);
         let (request_tx, request_rx) = mpsc::channel(1);
-        let handle = ValidatorEngineRequestHandler::new(processor).start(request_rx);
+        let handle = processor.start(request_rx);
 
         let (result_tx, mut result_rx) = mpsc::channel(1);
         request_tx
@@ -2080,7 +2131,7 @@ mod tests {
             EngineProcessor::new(Arc::clone(&client), Arc::clone(&cfg), mock_derivation, engine);
 
         let (req_tx, req_rx) = mpsc::channel(8);
-        let handle = ValidatorEngineRequestHandler::new(processor).start(req_rx);
+        let handle = processor.start(req_rx);
 
         let attributes = TestAttributesBuilder::new()
             .with_parent(parent_block)
@@ -2128,5 +2179,72 @@ mod tests {
             matches!(result, Err(crate::EngineError::ChannelClosed)),
             "expected ChannelClosed on clean shutdown, got {result:?}"
         );
+    }
+
+    #[rstest]
+    #[case::build(false)]
+    #[case::seal(true)]
+    #[tokio::test]
+    async fn dropped_payload_response_preserves_error_classification(#[case] seal: bool) {
+        let cfg = Arc::new(RollupConfig {
+            upgrades: UpgradeConfig { ecotone_time: Some(0), ..Default::default() },
+            ..Default::default()
+        });
+        let client = Arc::new(
+            test_engine_client_builder()
+                .with_fork_choice_updated_v3_response(ForkchoiceUpdated {
+                    payload_status: PayloadStatus {
+                        status: PayloadStatusEnum::Invalid {
+                            validation_error: "invalid build".into(),
+                        },
+                        latest_valid_hash: None,
+                    },
+                    payload_id: None,
+                })
+                .build(),
+        );
+        let state = EngineState::default();
+        let (state_tx, _) = watch::channel(state);
+        let (queue_tx, _) = watch::channel(0);
+        // No derivation calls are permitted: a dropped response fails before severity handling.
+        let mut processor = EngineProcessor::new(
+            client,
+            cfg,
+            MockEngineDerivationClient::new(),
+            Engine::new(state, state_tx, queue_tx),
+        );
+        let attributes = TestAttributesBuilder::new()
+            .with_parent(L2BlockInfo {
+                block_info: BlockInfo { hash: B256::with_last_byte(1), ..Default::default() },
+                ..Default::default()
+            })
+            .build();
+        if seal {
+            let (result_tx, result_rx) = mpsc::channel(1);
+            drop(result_rx);
+            let result = processor
+                .process_get_payload_request(GetPayloadRequest {
+                    payload_id: PayloadId::default(),
+                    attributes,
+                    result_tx,
+                    otel_cx: opentelemetry::Context::new(),
+                })
+                .await;
+            assert!(matches!(
+                result,
+                Err(EngineError::EngineTask(EngineTaskErrors::Seal(SealTaskError::MpscSend(_))))
+            ));
+        } else {
+            let (result_tx, result_rx) = mpsc::channel(1);
+            drop(result_rx);
+            let result = processor
+                .process_build_request(BuildRequest {
+                    attributes,
+                    result_tx,
+                    otel_cx: opentelemetry::Context::new(),
+                })
+                .await;
+            assert!(matches!(result, Err(EngineError::ChannelClosed)));
+        }
     }
 }

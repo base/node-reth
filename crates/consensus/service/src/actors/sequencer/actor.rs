@@ -721,7 +721,7 @@ where
                         Some(s) => Some(s.step(
                             &self.conductor,
                             &self.unsafe_payload_gossip_client,
-                            &self.engine_client,
+                            self.engine_client.as_ref(),
                         ).await),
                         None => std::future::pending().await,
                     }

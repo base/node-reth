@@ -3,6 +3,8 @@ use derive_more::PartialEq;
 use thiserror::Error;
 use tracing::info;
 
+use self::DerivationStateUpdate as Update;
+
 /// The possible states of the [`DerivationStateMachine`] implemented by the
 /// [`crate::DerivationActor`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -62,82 +64,41 @@ pub enum DerivationStateTransitionError {
     },
 }
 
-// Details all valid state transitions.
-fn transition(
-    state: &DerivationState,
-    update: &DerivationStateUpdate,
-) -> Result<DerivationState, DerivationStateTransitionError> {
-    match state {
-        // NB: initial state. Once we transition away from this, we never go back.
-        DerivationState::AwaitingELSyncCompletion => match update {
-            DerivationStateUpdate::ELSyncCompleted(_) => Ok(DerivationState::Deriving),
-            DerivationStateUpdate::NewAttributesConfirmed(_)
-            | DerivationStateUpdate::SignalProcessed
-            | DerivationStateUpdate::L1DataReceived => {
-                Ok(DerivationState::AwaitingELSyncCompletion)
+impl DerivationState {
+    /// Applies a valid transition without changing the engine-confirmed safe head.
+    pub fn transition(self, update: &Update) -> Result<Self, DerivationStateTransitionError> {
+        match (self, update) {
+            (Self::AwaitingELSyncCompletion, Update::ELSyncCompleted(_))
+            | (Self::AwaitingL1Data | Self::AwaitingUpdateAfterSignal, Update::L1DataReceived)
+            | (
+                Self::AwaitingSafeHeadConfirmation | Self::AwaitingUpdateAfterSignal,
+                Update::NewAttributesConfirmed(_),
+            ) => Ok(Self::Deriving),
+            (
+                Self::AwaitingL1Data
+                | Self::AwaitingSafeHeadConfirmation
+                | Self::AwaitingSignal
+                | Self::AwaitingUpdateAfterSignal,
+                Update::SignalProcessed,
+            ) => Ok(Self::AwaitingUpdateAfterSignal),
+            (
+                Self::AwaitingELSyncCompletion,
+                Update::NewAttributesConfirmed(_)
+                | Update::SignalProcessed
+                | Update::L1DataReceived,
+            )
+            | (Self::AwaitingSafeHeadConfirmation, Update::L1DataReceived)
+            | (Self::AwaitingSignal, Update::L1DataReceived | Update::MoreDataNeeded) => Ok(self),
+            (Self::Deriving, Update::NewAttributesDerived(_)) => {
+                Ok(Self::AwaitingSafeHeadConfirmation)
             }
+            (Self::Deriving, Update::SignalNeeded) => Ok(Self::AwaitingSignal),
+            (Self::Deriving, Update::MoreDataNeeded) => Ok(Self::AwaitingL1Data),
             _ => Err(DerivationStateTransitionError::InvalidTransition {
-                state: *state,
+                state: self,
                 update: update.clone(),
             }),
-        },
-        DerivationState::AwaitingL1Data => match update {
-            DerivationStateUpdate::L1DataReceived => Ok(DerivationState::Deriving),
-            DerivationStateUpdate::SignalProcessed => {
-                Ok(DerivationState::AwaitingUpdateAfterSignal)
-            }
-            _ => Err(DerivationStateTransitionError::InvalidTransition {
-                state: *state,
-                update: update.clone(),
-            }),
-        },
-        DerivationState::AwaitingSafeHeadConfirmation => match update {
-            DerivationStateUpdate::NewAttributesConfirmed(_) => Ok(DerivationState::Deriving),
-            DerivationStateUpdate::SignalProcessed => {
-                Ok(DerivationState::AwaitingUpdateAfterSignal)
-            }
-            DerivationStateUpdate::L1DataReceived => {
-                Ok(DerivationState::AwaitingSafeHeadConfirmation)
-            }
-            _ => Err(DerivationStateTransitionError::InvalidTransition {
-                state: *state,
-                update: update.clone(),
-            }),
-        },
-        DerivationState::AwaitingSignal => match update {
-            DerivationStateUpdate::SignalProcessed => {
-                Ok(DerivationState::AwaitingUpdateAfterSignal)
-            }
-            DerivationStateUpdate::L1DataReceived | DerivationStateUpdate::MoreDataNeeded => {
-                Ok(DerivationState::AwaitingSignal)
-            }
-            _ => Err(DerivationStateTransitionError::InvalidTransition {
-                state: *state,
-                update: update.clone(),
-            }),
-        },
-        DerivationState::AwaitingUpdateAfterSignal => match update {
-            DerivationStateUpdate::L1DataReceived
-            | DerivationStateUpdate::NewAttributesConfirmed(_) => Ok(DerivationState::Deriving),
-            DerivationStateUpdate::SignalProcessed => {
-                Ok(DerivationState::AwaitingUpdateAfterSignal)
-            }
-            _ => Err(DerivationStateTransitionError::InvalidTransition {
-                state: *state,
-                update: update.clone(),
-            }),
-        },
-        DerivationState::Deriving => match update {
-            DerivationStateUpdate::NewAttributesDerived(_) => {
-                Ok(DerivationState::AwaitingSafeHeadConfirmation)
-            }
-            DerivationStateUpdate::SignalNeeded => Ok(DerivationState::AwaitingSignal),
-            DerivationStateUpdate::MoreDataNeeded => Ok(DerivationState::AwaitingL1Data),
-            _ => Err(DerivationStateTransitionError::InvalidTransition {
-                state: *state,
-                update: update.clone(),
-            }),
-        },
+        }
     }
 }
 
@@ -205,11 +166,11 @@ impl DerivationStateMachine {
         }
 
         debug!(target: "derivation", state=?self.state, ?state_update, "Executing derivation state update.");
-        self.state = transition(&self.state, state_update)?;
+        self.state = self.state.transition(state_update)?;
 
-        if let DerivationStateUpdate::NewAttributesConfirmed(safe_head) = state_update {
-            self.confirmed_safe_head = **safe_head;
-        } else if let DerivationStateUpdate::ELSyncCompleted(safe_head) = state_update {
+        if let Update::NewAttributesConfirmed(safe_head) | Update::ELSyncCompleted(safe_head) =
+            state_update
+        {
             self.confirmed_safe_head = **safe_head;
         }
 
@@ -227,7 +188,7 @@ mod tests {
 
     use super::{
         DerivationState::*, DerivationStateMachine, DerivationStateTransitionError,
-        DerivationStateUpdate::*, L2BlockInfo, transition,
+        DerivationStateUpdate::*, L2BlockInfo,
     };
 
     /// Creates a dummy `L2BlockInfo` for testing
@@ -294,7 +255,7 @@ mod tests {
         #[case] update: super::DerivationStateUpdate,
         #[case] expected_state: super::DerivationState,
     ) {
-        let result = transition(&state, &update);
+        let result = state.transition(&update);
         assert!(result.is_ok(), "Expected valid transition from {state:?} with {update:?}");
         assert_eq!(
             result.unwrap(),
@@ -338,7 +299,7 @@ mod tests {
         #[case] state: super::DerivationState,
         #[case] update: super::DerivationStateUpdate,
     ) {
-        let result = transition(&state, &update);
+        let result = state.transition(&update);
         assert!(result.is_err(), "Expected invalid transition from {state:?} with {update:?}");
         match result.unwrap_err() {
             DerivationStateTransitionError::InvalidTransition {

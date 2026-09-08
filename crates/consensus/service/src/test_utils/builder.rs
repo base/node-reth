@@ -22,7 +22,7 @@ use super::{
 use crate::{
     DerivationActor, DerivationActorRequest, DerivationState, EngineActorRequest, EngineProcessor,
     EngineRequestReceiver, NodeActor, NodeMode, QueuedDerivationEngineClient,
-    QueuedEngineDerivationClient, SequencerEngineRequestCoordinator, ValidatorEngineRequestHandler,
+    QueuedEngineDerivationClient, SequencerEngineRequestCoordinator,
 };
 
 /// Live actor-system harness assembled by [`HarnessBuilder`].
@@ -266,11 +266,7 @@ impl HarnessBuilder {
             // of hanging until the tick budget expires and reporting a
             // misleading `ProgressTimeout`.
             let result = match role {
-                NodeMode::Validator => {
-                    ValidatorEngineRequestHandler::new(engine_processor)
-                        .start(engine_actor_request_rx)
-                        .await
-                }
+                NodeMode::Validator => engine_processor.start(engine_actor_request_rx).await,
                 NodeMode::Sequencer => {
                     let (unsafe_head_tx, _) = watch::channel(L2BlockInfo::default());
                     SequencerEngineRequestCoordinator::new(

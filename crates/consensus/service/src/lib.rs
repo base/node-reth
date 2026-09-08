@@ -54,7 +54,7 @@ pub use actors::{
     SequencerEngineClient, SequencerEngineRequestCoordinator, SequencerEngineState, ShadowCycle,
     ShadowFunding, ShadowReconciliationGate, ShadowReconciliationTask, ShadowSequencingState,
     UnsafePayloadGossipClient, UnsafePayloadGossipClientError, UnsealedPayloadHandle,
-    UpgradeSignalMetricsActor, UpgradeSignalNodeConfig, ValidatorEngineRequestHandler,
+    UpgradeSignalMetricsActor, UpgradeSignalNodeConfig,
 };
 
 mod metrics;

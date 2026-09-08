@@ -2,7 +2,7 @@ use alloy_primitives::BlockHash;
 use async_trait::async_trait;
 use base_consensus_derive::ChainProvider;
 use base_consensus_providers::AlloyChainProvider;
-use base_protocol::{BlockInfo, L2BlockInfo, SyncStatus};
+use base_protocol::{BlockInfo, SyncStatus};
 use thiserror::Error;
 use tokio::{
     select,
@@ -44,8 +44,6 @@ where
     /// Publishes the delegate-reported L1 derivation cursor.
     derivation_origin_tx: watch::Sender<Option<BlockInfo>>,
 
-    /// The engine's L2 safe head, according to updates from the Engine.
-    engine_l2_safe_head: L2BlockInfo,
     /// Whether the engine sync has completed. This will only ever go from false -> true.
     has_engine_sync_completed: bool,
 }
@@ -65,7 +63,7 @@ where
     DerivationEngineClient_: DerivationEngineClient,
 {
     /// Creates a new instance of the [`DelegateDerivationActor`].
-    pub fn new(
+    pub const fn new(
         engine_client: DerivationEngineClient_,
         cancellation_token: CancellationToken,
         inbound_request_rx: mpsc::Receiver<DerivationActorRequest>,
@@ -80,7 +78,6 @@ where
             derivation_delegate_provider,
             l1_provider,
             derivation_origin_tx,
-            engine_l2_safe_head: L2BlockInfo::default(),
             has_engine_sync_completed: false,
         }
     }
@@ -237,11 +234,9 @@ where
         match request_type {
             DerivationActorRequest::ProcessEngineSafeHeadUpdateRequest(safe_head) => {
                 debug!(target: "derivation", safe_head = ?*safe_head, "Received safe head from engine.");
-                self.engine_l2_safe_head = *safe_head;
             }
-            DerivationActorRequest::ProcessEngineSyncCompletionRequest(safe_head) => {
+            DerivationActorRequest::ProcessEngineSyncCompletionRequest(_) => {
                 info!(target: "derivation", "Engine finished syncing, starting derivation.");
-                self.engine_l2_safe_head = *safe_head;
                 self.has_engine_sync_completed = true;
             }
             DerivationActorRequest::ProcessEngineSignalRequest(_)

@@ -46,74 +46,80 @@ impl QueuedEngineRpcClient {
     }
 }
 
-#[async_trait]
-impl EngineRpcClient for QueuedEngineRpcClient {
-    async fn get_config(&self) -> RpcResult<RollupConfig> {
-        let (config_tx, config_rx) = oneshot::channel();
+// Only request/reply plumbing is generated. Admission remains fail-fast and handlers own
+// execution; dropping a caller drops its reply receiver without cancelling an admitted query.
+macro_rules! engine_queries {
+    ($(async fn $name:ident($($arg:ident: $arg_ty:ty),*) -> $result:ty => |$sender:ident| $query:expr, $error:literal;)*) => {
+        #[async_trait]
+        impl EngineRpcClient for QueuedEngineRpcClient {
+            $(
+                async fn $name(&self, $($arg: $arg_ty),*) -> RpcResult<$result> {
+                    let ($sender, rx) = oneshot::channel();
+                    self.try_enqueue_engine_query($query)?;
+                    rx.await.map_err(|_| {
+                        error!(target: "block_engine", $error);
+                        ErrorObject::from(ErrorCode::InternalError)
+                    })
+                }
+            )*
+        }
+    };
+}
 
-        self.try_enqueue_engine_query(EngineQueries::Config(config_tx))?;
+engine_queries! {
+    async fn get_config() -> RollupConfig => |sender|
+        EngineQueries::Config(sender), "Failed to receive config from engine rpc";
+    async fn get_state() -> EngineState => |sender|
+        EngineQueries::State(sender), "Failed to receive state from engine rpc";
+    async fn output_at_block(block: BlockNumberOrTag) -> (L2BlockInfo, OutputRoot, EngineState) => |sender|
+        EngineQueries::OutputAtBlock { block, sender }, "Failed to receive output at block from engine rpc";
+    async fn dev_get_task_queue_length() -> usize => |sender|
+        EngineQueries::TaskQueueLength(sender), "Failed to receive task queue length from engine rpc";
+    async fn dev_subscribe_to_engine_queue_length() -> watch::Receiver<usize> => |sender|
+        EngineQueries::QueueLengthReceiver(sender), "Failed to receive queue length receiver from engine rpc";
+    async fn dev_subscribe_to_engine_state() -> watch::Receiver<EngineState> => |sender|
+        EngineQueries::StateReceiver(sender), "Failed to receive state receiver from engine rpc";
+}
 
-        config_rx.await.map_err(|_| {
-            error!(target: "block_engine", "Failed to receive config from engine rpc");
-            ErrorObject::from(ErrorCode::InternalError)
-        })
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn reports_dropped_request_and_reply() {
+        let (request_tx, request_rx) = mpsc::channel(1);
+        drop(request_rx);
+        let error = QueuedEngineRpcClient::new(request_tx).get_config().await.unwrap_err();
+        assert_eq!(error.code(), ErrorCode::InternalError.code());
+
+        let (request_tx, mut request_rx) = mpsc::channel(1);
+        let client = QueuedEngineRpcClient::new(request_tx);
+        let call = tokio::spawn(async move { client.get_config().await });
+        drop(request_rx.recv().await.unwrap());
+        let error = call.await.unwrap().unwrap_err();
+        assert_eq!(error.code(), ErrorCode::InternalError.code());
     }
 
-    async fn get_state(&self) -> RpcResult<EngineState> {
-        let (state_tx, state_rx) = oneshot::channel();
+    #[tokio::test]
+    async fn full_queue_fails_fast_and_argument_is_dispatched() {
+        let (request_tx, mut request_rx) = mpsc::channel(1);
+        let client = QueuedEngineRpcClient::new(request_tx);
+        let (tx, _rx) = oneshot::channel();
+        client.try_enqueue_engine_query(EngineQueries::Config(tx)).unwrap();
+        assert_eq!(client.get_state().await.unwrap_err().code(), ErrorCode::ServerIsBusy.code());
+        drop(request_rx.recv().await);
 
-        self.try_enqueue_engine_query(EngineQueries::State(state_tx))?;
-
-        state_rx.await.map_err(|_| {
-            error!(target: "block_engine", "Failed to receive state from engine rpc");
-            ErrorObject::from(ErrorCode::InternalError)
-        })
-    }
-
-    async fn output_at_block(
-        &self,
-        block: BlockNumberOrTag,
-    ) -> RpcResult<(L2BlockInfo, OutputRoot, EngineState)> {
-        let (output_tx, output_rx) = oneshot::channel();
-
-        self.try_enqueue_engine_query(EngineQueries::OutputAtBlock { block, sender: output_tx })?;
-
-        output_rx.await.map_err(|_| {
-            error!(target: "block_engine", "Failed to receive output at block from engine rpc");
-            ErrorObject::from(ErrorCode::InternalError)
-        })
-    }
-
-    async fn dev_get_task_queue_length(&self) -> RpcResult<usize> {
-        let (length_tx, length_rx) = oneshot::channel();
-
-        self.try_enqueue_engine_query(EngineQueries::TaskQueueLength(length_tx))?;
-
-        length_rx.await.map_err(|_| {
-            error!(target: "block_engine", "Failed to receive task queue length from engine rpc");
-            ErrorObject::from(ErrorCode::InternalError)
-        })
-    }
-
-    async fn dev_subscribe_to_engine_queue_length(&self) -> RpcResult<watch::Receiver<usize>> {
-        let (sub_tx, sub_rx) = oneshot::channel();
-
-        self.try_enqueue_engine_query(EngineQueries::QueueLengthReceiver(sub_tx))?;
-
-        sub_rx.await.map_err(|_| {
-            error!(target: "block_engine", "Failed to receive queue length receiver from engine rpc");
-            ErrorObject::from(ErrorCode::InternalError)
-        })
-    }
-
-    async fn dev_subscribe_to_engine_state(&self) -> RpcResult<watch::Receiver<EngineState>> {
-        let (sub_tx, sub_rx) = oneshot::channel();
-
-        self.try_enqueue_engine_query(EngineQueries::StateReceiver(sub_tx))?;
-
-        sub_rx.await.map_err(|_| {
-            error!(target: "block_engine", "Failed to receive state receiver from engine rpc");
-            ErrorObject::from(ErrorCode::InternalError)
-        })
+        let block = BlockNumberOrTag::Number(42);
+        let call = tokio::spawn(async move { client.output_at_block(block).await });
+        match request_rx.recv().await.unwrap() {
+            EngineRpcRequest::EngineQuery(query) => match *query {
+                EngineQueries::OutputAtBlock { block: actual, sender } => {
+                    assert_eq!(actual, block);
+                    drop(sender);
+                }
+                other => panic!("unexpected query: {other:?}"),
+            },
+        }
+        assert_eq!(call.await.unwrap().unwrap_err().code(), ErrorCode::InternalError.code());
     }
 }

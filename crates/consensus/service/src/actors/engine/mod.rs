@@ -24,8 +24,7 @@ mod engine_request_processor;
 pub use client::MockEngineDerivationClient;
 pub use engine_request_processor::{EngineProcessor, EngineRequestReceiver, ResetOutcome};
 
-mod validator_engine_request_handler;
-pub use validator_engine_request_handler::ValidatorEngineRequestHandler;
+mod validator;
 
 mod rpc_request_processor;
 pub use rpc_request_processor::EngineRpcProcessor;

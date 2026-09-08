@@ -2,19 +2,18 @@
 
 use async_trait::async_trait;
 use derive_more::Constructor;
-use futures::FutureExt;
 use tokio::sync::mpsc;
 use tokio_util::{
-    future::FutureExt as _,
     sync::{CancellationToken, WaitForCancellationFuture},
+    task::AbortOnDropHandle,
 };
 
 use crate::{
     EngineActorRequest, EngineError, EngineRequestReceiver, NodeActor, actors::CancellableContext,
 };
 
-/// The [`EngineActor`] is an intermediary that receives [`EngineActorRequest`] and delegates:
-/// - Node engine requests to the configured [`EngineRequestReceiver`].
+/// Supervises serialized engine processing on the inbound request queue.
+/// No relay queue sits between producers and the processor's bounded receiver.
 #[derive(Constructor, Debug)]
 pub struct EngineActor<EngineRequestReceiver_>
 where
@@ -45,74 +44,73 @@ where
     type Error = EngineError;
     type StartData = ();
 
-    async fn start(mut self, _: Self::StartData) -> Result<(), Self::Error> {
-        let (engine_processing_tx, engine_processing_rx) = mpsc::channel(1024);
-
-        // Helper to DRY task completion handling.
-        let handle_task_result = |task_name: &'static str, cancel_token: CancellationToken| {
-            move |result: Option<Result<Result<(), EngineError>, tokio::task::JoinError>>| async move {
-                cancel_token.cancel();
-
-                let Some(result) = result else {
-                    warn!(target: "engine", task_name, "Task cancelled");
-                    return Ok(());
-                };
-
-                let Ok(result) = result else {
-                    error!(target: "engine", result = ?result, task_name, "Task panicked");
-                    return Err(EngineError::ChannelClosed);
-                };
-
-                match result {
-                    Ok(()) => {
-                        info!(target: "engine", task_name, "Task completed successfully");
-                        Ok(())
-                    }
-                    Err(err) => {
-                        error!(target: "engine", error = ?err, task_name, "Task failed");
-                        Err(err)
-                    }
-                }
+    async fn start(self, _: Self::StartData) -> Result<(), Self::Error> {
+        // Aborting the supervisor must not detach engine work either.
+        let mut processing =
+            AbortOnDropHandle::new(self.engine_receiver.start(self.inbound_request_rx));
+        let result = tokio::select! {
+            biased;
+            _ = self.cancellation_token.cancelled() => {
+                processing.abort();
+                let _ = processing.await;
+                return Ok(());
             }
+            result = &mut processing => result,
         };
+        self.cancellation_token.cancel();
+        result.map_err(|error| {
+            error!(target: "engine", ?error, "Engine processing task failed");
+            EngineError::ChannelClosed
+        })?
+    }
+}
 
-        let processing_cancellation = self.cancellation_token.clone();
-        // Start the engine processing task.
-        let processing_handle = self
-            .engine_receiver
-            .start(engine_processing_rx)
-            .with_cancellation_token(&processing_cancellation)
-            .then(handle_task_result("Engine processing", processing_cancellation.clone()));
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
 
-        // Helper to send processing requests with error handling.
-        let send_engine_processing_request = |req: EngineActorRequest| async {
-            engine_processing_tx.send(req).await.map_err(|_| {
-                error!(target: "engine", "Engine processing channel closed unexpectedly");
-                self.cancellation_token.clone().cancel();
-                EngineError::ChannelClosed
-            })
-        };
+    use tokio::task::JoinHandle;
 
-        loop {
-            tokio::select! {
-                _ = self.cancellation_token.cancelled() => {
-                    warn!(target: "engine", "EngineActor received shutdown signal. Awaiting task completion.");
+    use super::*;
 
-                    processing_handle.await?;
-
-                    return Ok(());
-                }
-
-                req = self.inbound_request_rx.recv() => {
-                    let Some(request) = req else {
-                        error!(target: "engine", "Engine inbound request receiver closed unexpectedly");
-                        self.cancellation_token.cancel();
-                        return Err(EngineError::ChannelClosed);
-                    };
-
-                    send_engine_processing_request(request).await?;
-                }
-            }
+    mockall::mock! {
+        pub Receiver {}
+        impl EngineRequestReceiver for Receiver {
+            fn start(self, requests: mpsc::Receiver<EngineActorRequest>) -> JoinHandle<Result<(), EngineError>>;
         }
+    }
+
+    #[tokio::test]
+    async fn processor_failure_cancels_node_without_waiting_for_another_request() {
+        let token = CancellationToken::new();
+        let (_tx, rx) = mpsc::channel(1);
+        let mut receiver = MockReceiver::new();
+        receiver
+            .expect_start()
+            .return_once(|_requests| tokio::spawn(async { Err(EngineError::ShadowInternalReset) }));
+        let result = tokio::time::timeout(
+            Duration::from_secs(1),
+            EngineActor::new(token.clone(), rx, receiver).start(()),
+        )
+        .await
+        .unwrap();
+        assert!(matches!(result, Err(EngineError::ShadowInternalReset)));
+        assert!(token.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn cancellation_joins_processor_and_closes_the_inbound_queue() {
+        let token = CancellationToken::new();
+        let (tx, rx) = mpsc::channel(1);
+        let mut receiver = MockReceiver::new();
+        receiver.expect_start().return_once(|mut requests| {
+            tokio::spawn(async move {
+                requests.recv().await;
+                Ok(())
+            })
+        });
+        token.cancel();
+        EngineActor::new(token, rx, receiver).start(()).await.unwrap();
+        assert!(tx.is_closed(), "shutdown must drop the processor, not detach it");
     }
 }

@@ -213,7 +213,7 @@ mod tests {
     #[tokio::test]
     async fn test_launch_no_modules() {
         let launcher = RpcBuilder {
-            socket: SocketAddr::from(([127, 0, 0, 1], 8080)),
+            socket: SocketAddr::from(([127, 0, 0, 1], 0)),
             no_restart: false,
             enable_admin: false,
             admin_persistence: None,
@@ -229,7 +229,7 @@ mod tests {
     #[tokio::test]
     async fn test_launch_with_modules() {
         let launcher = RpcBuilder {
-            socket: SocketAddr::from(([127, 0, 0, 1], 8081)),
+            socket: SocketAddr::from(([127, 0, 0, 1], 0)),
             no_restart: false,
             enable_admin: false,
             admin_persistence: None,

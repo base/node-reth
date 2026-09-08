@@ -41,26 +41,16 @@ pub struct QueuedDerivationEngineClient {
 #[async_trait]
 impl DerivationEngineClient for QueuedDerivationEngineClient {
     async fn reset_engine_forkchoice(&self, reason: ResetReason) -> EngineClientResult<()> {
-        let (result_tx, mut result_rx) = mpsc::channel(1);
-
         info!(target: "derivation", "Sending reset request to engine.");
-        self.engine_actor_request_tx
-            .send(EngineActorRequest::ResetRequest(Box::new(ResetRequest {
+        EngineActorRequest::call(&self.engine_actor_request_tx, |result_tx| {
+            EngineActorRequest::ResetRequest(Box::new(ResetRequest {
                 result_tx,
                 origin: ResetOrigin::Derivation,
                 reason,
-            })))
-            .await
-            .map_err(|_| EngineClientError::RequestError("request channel closed.".to_string()))?;
-
-        result_rx
-            .recv()
-            .await
-            .inspect(|_| info!(target: "derivation", "Engine reset successfully."))
-            .ok_or_else(|| {
-                error!(target: "derivation_engine_client", "Failed to receive forkchoice reset result");
-                EngineClientError::ResponseError("response channel closed.".to_string())
-            })?
+            }))
+        })
+        .await
+        .inspect(|_| info!(target: "derivation", "Engine reset successfully."))?
     }
 
     async fn send_finalized_l2_block(&self, block_number: u64) -> EngineClientResult<()> {

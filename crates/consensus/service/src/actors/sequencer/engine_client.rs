@@ -1,4 +1,4 @@
-use std::{fmt::Debug, sync::Arc};
+use std::fmt::Debug;
 
 use alloy_rpc_types_engine::PayloadId;
 use async_trait::async_trait;
@@ -75,62 +75,6 @@ pub trait SequencerEngineClient: Debug + Send + Sync {
     async fn el_sync_finished(&self) -> EngineClientResult<bool>;
 }
 
-/// Blanket implementation so [`Arc<T>`] can be used wherever `T: SequencerEngineClient`.
-///
-/// Both [`crate::SequencerActor`] and [`super::build::PayloadBuilder`] hold an
-/// `Arc` to the same engine client, so this impl allows both to call trait
-/// methods without any additional wrapping.
-#[async_trait]
-impl<T: SequencerEngineClient> SequencerEngineClient for Arc<T> {
-    async fn reset_engine_forkchoice(&self, reason: ResetReason) -> EngineClientResult<()> {
-        (**self).reset_engine_forkchoice(reason).await
-    }
-
-    async fn reset_engine_forkchoice_coordinated(
-        &self,
-        reason: ResetReason,
-    ) -> EngineClientResult<()> {
-        (**self).reset_engine_forkchoice_coordinated(reason).await
-    }
-
-    async fn start_build_block(
-        &self,
-        attributes: AttributesWithParent,
-    ) -> EngineClientResult<PayloadId> {
-        (**self).start_build_block(attributes).await
-    }
-
-    async fn get_sealed_payload(
-        &self,
-        payload_id: PayloadId,
-        attributes: AttributesWithParent,
-    ) -> EngineClientResult<BaseExecutionPayloadEnvelope> {
-        (**self).get_sealed_payload(payload_id, attributes).await
-    }
-
-    async fn insert_unsafe_payload(
-        &self,
-        payload: BaseExecutionPayloadEnvelope,
-    ) -> EngineClientResult<L2BlockInfo> {
-        (**self).insert_unsafe_payload(payload).await
-    }
-
-    async fn get_unsafe_head(&self) -> EngineClientResult<L2BlockInfo> {
-        (**self).get_unsafe_head().await
-    }
-
-    async fn reconcile_shadow(
-        &self,
-        shadow_head: L2BlockInfo,
-    ) -> EngineClientResult<Option<L2BlockInfo>> {
-        (**self).reconcile_shadow(shadow_head).await
-    }
-
-    async fn el_sync_finished(&self) -> EngineClientResult<bool> {
-        (**self).el_sync_finished().await
-    }
-}
-
 /// Queue-based implementation of the [`SequencerEngineClient`] trait. This handles all
 /// channel-based communication.
 #[derive(Constructor, Debug)]
@@ -144,27 +88,18 @@ pub struct QueuedSequencerEngineClient {
 }
 
 impl QueuedSequencerEngineClient {
-    async fn send_reset(&self, origin: ResetOrigin, reason: ResetReason) -> EngineClientResult<()> {
-        let (result_tx, mut result_rx) = mpsc::channel(1);
-
+    /// Sends a reset with the caller's coordination provenance and waits for its acknowledgement.
+    pub async fn send_reset(
+        &self,
+        origin: ResetOrigin,
+        reason: ResetReason,
+    ) -> EngineClientResult<()> {
         info!(target: "sequencer", "Sending reset request to engine.");
-        self.engine_actor_request_tx
-            .send(EngineActorRequest::ResetRequest(Box::new(ResetRequest {
-                result_tx,
-                origin,
-                reason,
-            })))
-            .await
-            .map_err(|_| EngineClientError::RequestError("request channel closed.".to_string()))?;
-
-        result_rx
-            .recv()
-            .await
-            .inspect(|_| info!(target: "sequencer", "Engine reset successfully."))
-            .ok_or_else(|| {
-                error!(target: "block_engine", "Failed to receive forkchoice reset result");
-                EngineClientError::ResponseError("response channel closed.".to_string())
-            })?
+        EngineActorRequest::call(&self.engine_actor_request_tx, |result_tx| {
+            EngineActorRequest::ResetRequest(Box::new(ResetRequest { result_tx, origin, reason }))
+        })
+        .await
+        .inspect(|_| info!(target: "sequencer", "Engine reset successfully."))?
     }
 }
 
@@ -182,17 +117,13 @@ impl SequencerEngineClient for QueuedSequencerEngineClient {
         &self,
         shadow_head: L2BlockInfo,
     ) -> EngineClientResult<Option<L2BlockInfo>> {
-        let (result_tx, mut result_rx) = mpsc::channel(1);
-        self.engine_actor_request_tx
-            .send(EngineActorRequest::ReconcileShadowRequest(Box::new(ReconcileShadowRequest {
+        EngineActorRequest::call(&self.engine_actor_request_tx, |result_tx| {
+            EngineActorRequest::ReconcileShadowRequest(Box::new(ReconcileShadowRequest {
                 shadow_head,
                 result_tx,
-            })))
-            .await
-            .map_err(|_| EngineClientError::RequestError("request channel closed.".to_string()))?;
-        result_rx.recv().await.ok_or_else(|| {
-            EngineClientError::ResponseError("response channel closed.".to_string())
-        })?
+            }))
+        })
+        .await?
     }
 
     async fn reset_engine_forkchoice(&self, reason: ResetReason) -> EngineClientResult<()> {
@@ -210,36 +141,17 @@ impl SequencerEngineClient for QueuedSequencerEngineClient {
         &self,
         attributes: AttributesWithParent,
     ) -> EngineClientResult<PayloadId> {
-        let (payload_id_tx, mut payload_id_rx) = mpsc::channel(1);
-
         trace!(target: "sequencer", "Sending start build request to engine.");
-        if self
-            .engine_actor_request_tx
-            .send(EngineActorRequest::BuildRequest(Box::new(BuildRequest {
+        EngineActorRequest::call(&self.engine_actor_request_tx, |result_tx| {
+            EngineActorRequest::BuildRequest(Box::new(BuildRequest {
                 attributes,
-                result_tx: payload_id_tx,
+                result_tx,
                 otel_cx: opentelemetry::Context::current(),
-            })))
-            .await
-            .is_err()
-        {
-            return Err(EngineClientError::RequestError("request channel closed.".to_string()));
-        }
-
-        match payload_id_rx.recv().await {
-            Some(Ok(payload_id)) => {
-                trace!(target: "sequencer", ?payload_id, "Start build request successfully.");
-                Ok(payload_id)
-            }
-            Some(Err(err)) => {
-                info!(target: "sequencer", ?err, "Start build request failed.");
-                Err(EngineClientError::StartBuildError(err))
-            }
-            None => {
-                error!(target: "block_engine", "Failed to receive payload for initiated block build");
-                Err(EngineClientError::ResponseError("response channel closed.".to_string()))
-            }
-        }
+            }))
+        }).await?
+        .inspect(|payload_id| trace!(target: "sequencer", ?payload_id, "Start build request successfully."))
+        .inspect_err(|err| info!(target: "sequencer", ?err, "Start build request failed."))
+        .map_err(EngineClientError::StartBuildError)
     }
 
     async fn get_sealed_payload(
@@ -247,66 +159,38 @@ impl SequencerEngineClient for QueuedSequencerEngineClient {
         payload_id: PayloadId,
         attributes: AttributesWithParent,
     ) -> EngineClientResult<BaseExecutionPayloadEnvelope> {
-        let (result_tx, mut result_rx) = mpsc::channel(1);
-
         trace!(target: "sequencer", ?attributes, "Sending get payload request to engine.");
-        self.engine_actor_request_tx
-            .send(EngineActorRequest::GetPayloadRequest(Box::new(GetPayloadRequest {
+        EngineActorRequest::call(&self.engine_actor_request_tx, |result_tx| {
+            EngineActorRequest::GetPayloadRequest(Box::new(GetPayloadRequest {
                 payload_id,
                 attributes,
                 result_tx,
                 otel_cx: opentelemetry::Context::current(),
-            })))
-            .await
-            .map_err(|_| EngineClientError::RequestError("request channel closed.".to_string()))?;
-
-        match result_rx.recv().await {
-            Some(Ok(payload)) => {
-                trace!(target: "sequencer", ?payload, "Get payload succeeded.");
-                Ok(payload)
-            }
-            Some(Err(err)) => {
-                info!(target: "sequencer", ?err, "Get payload failed.");
-                Err(EngineClientError::SealError(err))
-            }
-            None => {
-                error!(target: "block_engine", "Failed to receive built payload");
-                Err(EngineClientError::ResponseError("response channel closed.".to_string()))
-            }
-        }
+            }))
+        })
+        .await?
+        .inspect(|payload| trace!(target: "sequencer", ?payload, "Get payload succeeded."))
+        .inspect_err(|err| info!(target: "sequencer", ?err, "Get payload failed."))
+        .map_err(EngineClientError::SealError)
     }
 
     async fn insert_unsafe_payload(
         &self,
         payload: BaseExecutionPayloadEnvelope,
     ) -> EngineClientResult<L2BlockInfo> {
-        let (result_tx, mut result_rx) = mpsc::channel(1);
-
         trace!(target: "sequencer", "Sending insert unsafe payload request to engine.");
-        self.engine_actor_request_tx
-            .send(EngineActorRequest::ProcessLocalUnsafeL2BlockRequest(Box::new(
+        let inserted_head = EngineActorRequest::call(&self.engine_actor_request_tx, |result_tx| {
+            EngineActorRequest::ProcessLocalUnsafeL2BlockRequest(Box::new(
                 InsertUnsafePayloadRequest {
                     envelope: payload,
                     result_tx: Some(result_tx),
                     otel_cx: opentelemetry::Context::current(),
                 },
-            )))
-            .await
-            .map_err(|_| EngineClientError::RequestError("request channel closed.".to_string()))?;
-
-        let inserted_head = match result_rx.recv().await {
-            Some(Ok(inserted_head)) => inserted_head,
-            Some(Err(err)) => {
-                info!(target: "sequencer", error = ?err, "Insert unsafe payload failed");
-                return Err(EngineClientError::InsertError(err));
-            }
-            None => {
-                error!(target: "block_engine", "Failed to receive insert unsafe payload result");
-                return Err(EngineClientError::ResponseError(
-                    "response channel closed.".to_string(),
-                ));
-            }
-        };
+            ))
+        })
+        .await?
+        .inspect_err(|err| info!(target: "sequencer", error = ?err, "Insert unsafe payload failed"))
+        .map_err(EngineClientError::InsertError)?;
 
         trace!(
             target: "sequencer",

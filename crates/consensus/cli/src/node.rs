@@ -108,7 +108,7 @@ impl ConsensusNodeCommand {
                 res = async move {
                     let _upgrade_countdown_metrics = metrics_enabled
                         .then(|| CliMetrics::spawn_upgrade_countdown_recorder(cfg.clone()));
-                    args.start_with_overrides(cfg, Default::default()).await
+                    args.start_with_options(ConsensusNodeStartOptions::new(cfg)).await
                 } => res,
             }
         })
@@ -423,31 +423,8 @@ impl ConsensusNodeArgs {
         Ok(())
     }
 
-    /// Builds a rollup node with default external endpoint configuration.
-    pub async fn build_rollup_node(&self) -> eyre::Result<RollupNode> {
-        self.build_rollup_node_with_overrides(
-            self.load_rollup_config()?,
-            ConsensusNodeOverrides::default(),
-        )
-        .await
-    }
-
-    /// Builds a rollup node with caller-supplied endpoint overrides.
-    pub async fn build_rollup_node_with_overrides(
-        &self,
-        cfg: RollupConfig,
-        overrides: ConsensusNodeOverrides,
-    ) -> eyre::Result<RollupNode> {
-        self.build_rollup_node_with_overrides_and_upgrade_signal_startup(
-            cfg,
-            overrides,
-            UpgradeSignalStartupMode::ReadAndApply,
-        )
-        .await
-    }
-
     /// Builds a rollup node with caller-supplied endpoint overrides and upgrade-signal startup behavior.
-    pub async fn build_rollup_node_with_overrides_and_upgrade_signal_startup(
+    pub async fn build_rollup_node(
         &self,
         mut cfg: RollupConfig,
         overrides: ConsensusNodeOverrides,
@@ -613,36 +590,6 @@ impl ConsensusNodeArgs {
         summary.applied_upgrades
     }
 
-    /// Starts a rollup node with default external endpoint configuration.
-    pub async fn start(&self) -> eyre::Result<()> {
-        self.start_with_overrides(self.load_rollup_config()?, ConsensusNodeOverrides::default())
-            .await
-    }
-
-    /// Starts a rollup node with caller-supplied endpoint overrides.
-    pub async fn start_with_overrides(
-        &self,
-        cfg: RollupConfig,
-        overrides: ConsensusNodeOverrides,
-    ) -> eyre::Result<()> {
-        self.start_with_options(ConsensusNodeStartOptions::new(cfg).with_overrides(overrides)).await
-    }
-
-    /// Starts a rollup node with caller-supplied endpoint overrides and cancellation.
-    pub async fn start_with_overrides_and_cancellation(
-        &self,
-        cfg: RollupConfig,
-        overrides: ConsensusNodeOverrides,
-        cancellation: CancellationToken,
-    ) -> eyre::Result<()> {
-        self.start_with_options(
-            ConsensusNodeStartOptions::new(cfg)
-                .with_overrides(overrides)
-                .with_cancellation(cancellation),
-        )
-        .await
-    }
-
     /// Starts a rollup node with caller-supplied options.
     pub async fn start_with_options(&self, options: ConsensusNodeStartOptions) -> eyre::Result<()> {
         let ConsensusNodeStartOptions {
@@ -651,18 +598,14 @@ impl ConsensusNodeArgs {
             cancellation,
             upgrade_signal_startup_mode,
         } = options;
-        self.build_rollup_node_with_overrides_and_upgrade_signal_startup(
-            rollup_config,
-            overrides,
-            upgrade_signal_startup_mode,
-        )
-        .await?
-        .start_with_cancellation(cancellation)
-        .await
-        .map_err(|e| {
-            error!(target: "rollup_node", error = %e, "Failed to start rollup node service");
-            eyre::eyre!(e)
-        })
+        self.build_rollup_node(rollup_config, overrides, upgrade_signal_startup_mode)
+            .await?
+            .start_with_cancellation(cancellation)
+            .await
+            .map_err(|e| {
+                error!(target: "rollup_node", error = %e, "Failed to start rollup node service");
+                eyre::eyre!(e)
+            })
     }
 
     /// Returns the configured genesis signer address for the selected L2 chain.

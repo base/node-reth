@@ -314,6 +314,10 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
     }
 
     /// Fetches the payload from the execution layer using the payload timestamp for versioning.
+    ///
+    /// Uses V2 before Ecotone, V3 after Ecotone, V4 for Isthmus/Jovian before Base Azul,
+    /// and V5 for Base Azul / Osaka. Importing the result instead selects the API by payload
+    /// version; fetching alone neither inserts the payload nor changes forkchoice.
     pub async fn fetch_payload(
         cfg: &RollupConfig,
         engine: &EngineClient_,

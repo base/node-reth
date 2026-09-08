@@ -36,7 +36,6 @@ use crate::{
     QueuedL1WatcherDerivationClient, QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient,
     QueuedSequencerEngineClient, RecoveryModeGuard, RpcActor, RpcContext, SequencerActor,
     SequencerConfig, SequencerEngineRequestCoordinator, UpgradeSignalNodeConfig,
-    ValidatorEngineRequestHandler,
     actors::{BlockStream, NetworkInboundData, QueuedUnsafePayloadGossipClient},
 };
 
@@ -44,7 +43,7 @@ const DERIVATION_PROVIDER_CACHE_SIZE: usize = 1024;
 
 #[derive(Debug)]
 enum ConfiguredEngineReceiver<E: EngineClient + 'static> {
-    Validator(ValidatorEngineRequestHandler<E, QueuedEngineDerivationClient>),
+    Validator(EngineProcessor<E, QueuedEngineDerivationClient>),
     Sequencer(SequencerEngineRequestCoordinator<E, QueuedEngineDerivationClient>),
 }
 
@@ -303,9 +302,7 @@ impl RollupNode {
         );
 
         let engine_handler = if mode.is_validator() {
-            ConfiguredEngineReceiver::Validator(ValidatorEngineRequestHandler::new(
-                engine_processor,
-            ))
+            ConfiguredEngineReceiver::Validator(engine_processor)
         } else {
             ConfiguredEngineReceiver::Sequencer(SequencerEngineRequestCoordinator::new(
                 engine_processor,

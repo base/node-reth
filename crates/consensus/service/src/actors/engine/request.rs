@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use alloy_rpc_types_engine::PayloadId;
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_consensus_engine::{
@@ -7,6 +9,8 @@ use base_protocol::{AttributesWithParent, L2BlockInfo};
 use opentelemetry::Context;
 use thiserror::Error;
 use tokio::sync::mpsc;
+
+use crate::Metrics;
 
 /// The result of an Engine client call.
 pub type EngineClientResult<T> = Result<T, EngineClientError>;
@@ -84,6 +88,26 @@ pub enum EngineActorRequest {
     ResetRequest(Box<ResetRequest>),
 }
 
+impl EngineActorRequest {
+    /// Enqueues a request with backpressure and waits for its one-slot reply channel.
+    /// Transport failures remain distinct from the handler's result, which is returned unchanged.
+    /// Dropping this future closes the reply receiver, not an already enqueued engine operation.
+    pub async fn call<T: Send>(
+        sender: &mpsc::Sender<Self>,
+        request: impl FnOnce(mpsc::Sender<T>) -> Self + Send,
+    ) -> EngineClientResult<T> {
+        let (result_tx, mut result_rx) = mpsc::channel(1);
+        sender
+            .send(request(result_tx))
+            .await
+            .map_err(|_| EngineClientError::RequestError("request channel closed.".to_string()))?;
+        result_rx.recv().await.ok_or_else(|| {
+            error!(target: "block_engine", "Engine response channel closed");
+            EngineClientError::ResponseError("response channel closed.".to_string())
+        })
+    }
+}
+
 /// Request to replace a private shadow range with the active sequencer's P2P branch.
 #[derive(Debug)]
 pub struct ReconcileShadowRequest {
@@ -123,6 +147,33 @@ pub struct ResetRequest {
     pub origin: ResetOrigin,
     /// The condition that caused the reset request.
     pub reason: ResetReason,
+}
+
+impl ResetRequest {
+    /// Records the completed attempt before acknowledging it. Returns false if the caller
+    /// disappeared; the engine owner decides whether an unreported failure must stop processing.
+    pub async fn respond(
+        &self,
+        started: Instant,
+        before: L2BlockInfo,
+        after: L2BlockInfo,
+        outcome: ResetRequestOutcome,
+        result: EngineClientResult<()>,
+    ) -> bool {
+        Metrics::record_engine_reset(
+            self.origin,
+            self.reason,
+            outcome,
+            started.elapsed(),
+            before,
+            after,
+        );
+        if self.result_tx.send(result).await.is_err() {
+            warn!(target: "engine", origin = ?self.origin, reason = ?self.reason, "Sending reset response failed");
+            return false;
+        }
+        true
+    }
 }
 
 /// Identifies the state owner coordinating an engine reset.
@@ -246,4 +297,67 @@ pub struct GetPayloadRequest {
     pub result_tx: mpsc::Sender<Result<BaseExecutionPayloadEnvelope, SealTaskError>>,
     /// [`opentelemetry::Context`] from the requester, for trace propagation.
     pub otel_cx: Context,
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{pin::pin, task::Poll};
+
+    use futures::poll;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn call_distinguishes_transport_failure_from_engine_failure() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let request = |result_tx| {
+            EngineActorRequest::ResetRequest(Box::new(ResetRequest {
+                result_tx,
+                origin: ResetOrigin::Derivation,
+                reason: ResetReason::DerivationPipeline,
+            }))
+        };
+        let mut call = pin!(EngineActorRequest::call(&tx, request));
+        assert!(matches!(poll!(&mut call), Poll::Pending));
+        let EngineActorRequest::ResetRequest(reset) = rx.recv().await.unwrap() else { panic!() };
+        reset.result_tx.send(Err(EngineClientError::ELSyncing)).await.unwrap();
+        assert!(matches!(call.await, Ok(Err(EngineClientError::ELSyncing))));
+
+        let mut call = pin!(EngineActorRequest::call(&tx, request));
+        assert!(matches!(poll!(&mut call), Poll::Pending));
+        drop(rx.recv().await.unwrap());
+        assert!(matches!(call.await, Err(EngineClientError::ResponseError(_))));
+        drop(rx);
+        assert!(matches!(
+            EngineActorRequest::call(&tx, request).await,
+            Err(EngineClientError::RequestError(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn cancelling_call_leaves_admitted_request_with_closed_acknowledgement() {
+        let (tx, mut rx) = mpsc::channel(1);
+        {
+            let mut call = pin!(EngineActorRequest::call(&tx, |result_tx| {
+                EngineActorRequest::ResetRequest(Box::new(ResetRequest {
+                    result_tx,
+                    origin: ResetOrigin::Sequencer,
+                    reason: ResetReason::Admin,
+                }))
+            }));
+            assert!(matches!(poll!(&mut call), Poll::Pending));
+        }
+        let EngineActorRequest::ResetRequest(reset) = rx.recv().await.unwrap() else { panic!() };
+        assert!(
+            !reset
+                .respond(
+                    Instant::now(),
+                    L2BlockInfo::default(),
+                    L2BlockInfo::default(),
+                    ResetRequestOutcome::Unchanged,
+                    Ok(())
+                )
+                .await
+        );
+    }
 }

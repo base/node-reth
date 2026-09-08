@@ -5,9 +5,8 @@ use std::{sync::Arc, time::Instant};
 use alloy_eips::BlockNumberOrTag;
 use base_consensus_engine::{
     ConsolidateTask, EngineClient, EngineTask, EngineTaskError, EngineTaskErrorSeverity,
-    EngineTaskErrors, FinalizeTask, Metrics as EngineMetrics, SealTaskError,
+    FinalizeTask, Metrics as EngineMetrics,
 };
-use opentelemetry::context::FutureExt as OtelFutureExt;
 use tokio::{
     sync::{mpsc, watch},
     task::JoinHandle,
@@ -16,10 +15,9 @@ use tracing::{debug, error, info, warn};
 
 use super::{CanonicalUnsafeCatchup, Conductor, SequencerEngineState, ShadowReconciliationGate};
 use crate::{
-    BuildRequest, EngineActorRequest, EngineClientError, EngineDerivationClient, EngineError,
-    EngineProcessor, EngineRequestReceiver, GetPayloadRequest, InsertUnsafePayloadRequest, Metrics,
-    ReconcileShadowRequest, ResetOrigin, ResetRequest, ResetRequestOutcome,
-    actors::engine::ResetOutcome,
+    EngineActorRequest, EngineClientError, EngineDerivationClient, EngineError, EngineProcessor,
+    EngineRequestReceiver, InsertUnsafePayloadRequest, ReconcileShadowRequest, ResetOrigin,
+    ResetRequestOutcome, actors::engine::ResetOutcome,
 };
 
 const MAX_SEQUENCER_EXTERNAL_UNSAFE_GAP: u64 = 300;
@@ -275,64 +273,18 @@ where
 
                 match request {
                     EngineActorRequest::BuildRequest(build_request) => {
-                        let BuildRequest { attributes, result_tx, otel_cx } = *build_request;
-                        let client = Arc::clone(self.processor.client());
-                        let rollup = Arc::clone(self.processor.rollup());
-                        let build_result = self
-                            .processor
-                            .engine_mut()
-                            .build(client, rollup, attributes)
-                            .with_context(otel_cx)
-                            .await;
-                        match build_result {
-                            Ok(payload_id) => {
-                                result_tx
-                                    .send(Ok(payload_id))
-                                    .await
-                                    .map_err(|_| EngineError::ChannelClosed)?;
-                            }
-                            Err(err) => {
-                                let severity = err.severity();
-                                let error = format!("{err:?}");
-                                result_tx
-                                    .send(Err(err))
-                                    .await
-                                    .map_err(|_| EngineError::ChannelClosed)?;
-                                let outcome = self
-                                    .processor
-                                    .handle_engine_task_error_severity(severity, error)
-                                    .await?;
-                                if self.is_shadow_active() && outcome == ResetOutcome::Reset {
-                                    return Err(EngineError::ShadowInternalReset);
-                                }
-                            }
+                        let outcome = self.processor.process_build_request(*build_request).await?;
+                        if self.is_shadow_active() && outcome == ResetOutcome::Reset {
+                            return Err(EngineError::ShadowInternalReset);
                         }
                     }
                     EngineActorRequest::GetPayloadRequest(get_payload_request) => {
-                        let GetPayloadRequest { payload_id, attributes, result_tx, otel_cx } =
-                            *get_payload_request;
-                        let client = Arc::clone(self.processor.client());
-                        let rollup = Arc::clone(self.processor.rollup());
-                        let result = self
+                        let outcome = self
                             .processor
-                            .engine_mut()
-                            .get_payload(client, rollup, payload_id, attributes)
-                            .with_context(otel_cx)
-                            .await;
-
-                        let error =
-                            result.as_ref().err().map(|err| (err.severity(), format!("{err:?}")));
-                        result_tx.send(result).await.map_err(|err| {
-                            EngineTaskErrors::Seal(SealTaskError::MpscSend(Box::new(err)))
-                        })?;
-                        if let Some((severity, error)) = error {
-                            let outcome = self
-                                .processor
-                                .handle_engine_task_error_severity(severity, error)
-                                .await?;
-                            if self.is_shadow_active() && outcome == ResetOutcome::Reset {
-                                return Err(EngineError::ShadowInternalReset);
-                            }
+                            .process_get_payload_request(*get_payload_request)
+                            .await?;
+                        if self.is_shadow_active() && outcome == ResetOutcome::Reset {
+                            return Err(EngineError::ShadowInternalReset);
                         }
                     }
                     EngineActorRequest::ProcessSafeL2SignalRequest(safe_signal) => {
@@ -477,7 +429,7 @@ where
                     }
                     EngineActorRequest::ResetRequest(reset_request) => {
                         let reset_started = Instant::now();
-                        let ResetRequest { result_tx, origin, reason } = *reset_request;
+                        let origin = reset_request.origin;
                         let sync_state = self.processor.engine_state().sync_state;
                         let head = sync_state.unsafe_head();
                         let unsafe_before = head;
@@ -488,56 +440,41 @@ where
                             let shadow = *shadow;
                             if catchup.is_faulted() {
                                 error!(target: "engine", "Canonical catch-up payload buffer is faulted");
-                                Metrics::record_engine_reset(
-                                    origin,
-                                    reason,
-                                    ResetRequestOutcome::Failed,
-                                    reset_started.elapsed(),
-                                    unsafe_before,
-                                    self.processor.engine_state().sync_state.unsafe_head(),
-                                );
-                                if result_tx
-                                    .send(Err(EngineClientError::ShadowBufferFaulted))
-                                    .await
-                                    .is_err()
-                                {
-                                    warn!(target: "engine", "Sending catch-up fault response failed");
-                                }
+                                reset_request
+                                    .respond(
+                                        reset_started,
+                                        unsafe_before,
+                                        self.processor.engine_state().sync_state.unsafe_head(),
+                                        ResetRequestOutcome::Failed,
+                                        Err(EngineClientError::ShadowBufferFaulted),
+                                    )
+                                    .await;
                                 continue;
                             }
                             if !catchup.is_complete(head, sync_state.safe_head()) {
                                 warn!(target: "engine", "Deferring sequencer reset until canonical catch-up completes");
-                                Metrics::record_engine_reset(
-                                    origin,
-                                    reason,
-                                    ResetRequestOutcome::Deferred,
-                                    reset_started.elapsed(),
-                                    unsafe_before,
-                                    self.processor.engine_state().sync_state.unsafe_head(),
-                                );
-                                if result_tx.send(Err(EngineClientError::ELSyncing)).await.is_err()
-                                {
-                                    warn!(target: "engine", "Sending ELSyncing response failed");
-                                }
+                                reset_request
+                                    .respond(
+                                        reset_started,
+                                        unsafe_before,
+                                        self.processor.engine_state().sync_state.unsafe_head(),
+                                        ResetRequestOutcome::Deferred,
+                                        Err(EngineClientError::ELSyncing),
+                                    )
+                                    .await;
                                 continue;
                             }
                             if shadow {
                                 if origin != ResetOrigin::ShadowCycleCoordinated {
-                                    Metrics::record_engine_reset(
-                                        origin,
-                                        reason,
-                                        ResetRequestOutcome::Failed,
-                                        reset_started.elapsed(),
-                                        unsafe_before,
-                                        self.processor.engine_state().sync_state.unsafe_head(),
-                                    );
-                                    if result_tx
-                                        .send(Err(EngineClientError::ShadowReconciliationDisabled))
-                                        .await
-                                        .is_err()
-                                    {
-                                        warn!(target: "engine", "Sending shadow activation response failed");
-                                    }
+                                    reset_request
+                                        .respond(
+                                            reset_started,
+                                            unsafe_before,
+                                            self.processor.engine_state().sync_state.unsafe_head(),
+                                            ResetRequestOutcome::Failed,
+                                            Err(EngineClientError::ShadowReconciliationDisabled),
+                                        )
+                                        .await;
                                     continue;
                                 }
                                 info!(
@@ -553,17 +490,15 @@ where
                                     Box::new(ShadowReconciliationGate::new(head)),
                                 );
                                 self.unsafe_head_tx.send_replace(head);
-                                Metrics::record_engine_reset(
-                                    origin,
-                                    reason,
-                                    ResetRequestOutcome::from_unsafe_heads(unsafe_before, head),
-                                    reset_started.elapsed(),
-                                    unsafe_before,
-                                    head,
-                                );
-                                if result_tx.send(Ok(())).await.is_err() {
-                                    warn!(target: "engine", "Sending shadow activation response failed");
-                                }
+                                reset_request
+                                    .respond(
+                                        reset_started,
+                                        unsafe_before,
+                                        head,
+                                        ResetRequestOutcome::from_unsafe_heads(unsafe_before, head),
+                                        Ok(()),
+                                    )
+                                    .await;
                                 continue;
                             }
                             info!(
@@ -580,17 +515,15 @@ where
                         // aborting any in-progress snap sync. Defer until el_sync_finished=true.
                         if !self.processor.engine_state().el_sync_finished {
                             warn!(target: "engine", "Deferring engine reset: EL sync not yet complete");
-                            Metrics::record_engine_reset(
-                                origin,
-                                reason,
-                                ResetRequestOutcome::Deferred,
-                                reset_started.elapsed(),
-                                unsafe_before,
-                                self.processor.engine_state().sync_state.unsafe_head(),
-                            );
-                            if result_tx.send(Err(EngineClientError::ELSyncing)).await.is_err() {
-                                warn!(target: "engine", "Sending ELSyncing response failed");
-                            }
+                            reset_request
+                                .respond(
+                                    reset_started,
+                                    unsafe_before,
+                                    self.processor.engine_state().sync_state.unsafe_head(),
+                                    ResetRequestOutcome::Deferred,
+                                    Err(EngineClientError::ELSyncing),
+                                )
+                                .await;
                             continue;
                         }
 
@@ -610,23 +543,17 @@ where
                             if let Err(error) =
                                 self.processor.notify_derivation_of_reset(*safe_head).await
                             {
-                                Metrics::record_engine_reset(
-                                    origin,
-                                    reason,
-                                    ResetRequestOutcome::DerivationNotificationFailed,
-                                    reset_started.elapsed(),
-                                    unsafe_before,
-                                    self.processor.engine_state().sync_state.unsafe_head(),
-                                );
-                                if result_tx
-                                    .send(Err(EngineClientError::ResetForkchoiceError(
-                                        error.to_string(),
-                                    )))
-                                    .await
-                                    .is_err()
-                                {
-                                    warn!(target: "engine", "Sending reset response failed");
-                                }
+                                reset_request
+                                    .respond(
+                                        reset_started,
+                                        unsafe_before,
+                                        self.processor.engine_state().sync_state.unsafe_head(),
+                                        ResetRequestOutcome::DerivationNotificationFailed,
+                                        Err(EngineClientError::ResetForkchoiceError(
+                                            error.to_string(),
+                                        )),
+                                    )
+                                    .await;
                                 if self.is_shadow_active() {
                                     return Err(error);
                                 }
@@ -640,23 +567,22 @@ where
                         } else {
                             ResetRequestOutcome::Failed
                         };
-                        Metrics::record_engine_reset(
-                            origin,
-                            reason,
-                            reset_outcome,
-                            reset_started.elapsed(),
-                            unsafe_before,
-                            unsafe_after,
-                        );
-
                         // Send the result.
                         let response_payload = reset_res
                             .as_ref()
                             .map(|_| ())
                             .map_err(|e| EngineClientError::ResetForkchoiceError(e.to_string()));
                         let reset_succeeded = reset_res.is_ok();
-                        if result_tx.send(response_payload).await.is_err() {
-                            warn!(target: "engine", "Sending reset response failed");
+                        if !reset_request
+                            .respond(
+                                reset_started,
+                                unsafe_before,
+                                unsafe_after,
+                                reset_outcome,
+                                response_payload,
+                            )
+                            .await
+                        {
                             // If there was an error and we couldn't notify the caller to handle it,
                             // return the error.
                             reset_res?;

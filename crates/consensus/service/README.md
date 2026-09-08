@@ -41,7 +41,7 @@ First, a root `CancellationToken` is created. If a safe-head database path was p
 
 Second, the core channels are created. There is one `mpsc` channel of capacity 1024 for `DerivationActorRequest`, one of capacity 1024 for `EngineActorRequest`, and one `watch` channel for the unsafe L2 head (`L2BlockInfo`).
 
-Third, the engine actor is constructed. It wraps a `BaseEngineClient` together with an `Engine` task queue, an `EngineProcessor` that holds the bootstrap logic and main processing loop, and an `EngineRpcProcessor` that handles concurrent RPC queries behind a semaphore of size 16. The engine actor receives on its `mpsc::Receiver<EngineActorRequest>` and routes each request either to the processing task or to the RPC task based on the request variant.
+Third, the engine actor supervises the serialized `EngineProcessor` (with sequencer coordination when enabled). The processor receives the inbound `EngineActorRequest` queue directly: there is one bounded queue, not an additional 1024-request relay buffer. Processor completion cancels the node; shutdown aborts and joins the processor rather than detaching it. Public engine RPC queries use their own `EngineRpcProcessor` and queue, with concurrency bounded independently.
 
 Fourth, the derivation actor is created. In normal mode this is a `DerivationActor` wrapping an `OnlinePipeline` from `base-consensus-derive`. In delegation mode this is a `DelegateDerivationActor` that polls an external sync-status RPC endpoint instead of running the pipeline. Both communicate to the engine through a `QueuedDerivationEngineClient` that wraps `mpsc::Sender<EngineActorRequest>`.
 
@@ -57,15 +57,17 @@ Finally, `spawn_and_wait!` spawns all constructed actors onto the `JoinSet` and 
 
 ## Engine Actor
 
-The engine actor is the hub of the service. All other actors that need to affect the L2 execution layer send requests to it. It owns the `Engine` struct from `base-consensus-engine`, which maintains the task queue and the `EngineState` watch channel. The actor's main loop receives `EngineActorRequest` variants and routes them:
+The engine processor is the hub of the service. All other actors that need to affect the L2 execution layer send requests to its bounded inbound queue. It owns the `Engine` struct from `base-consensus-engine`, which maintains the task queue and the `EngineState` watch channel. Its processing loop receives `EngineActorRequest` variants and routes them:
 
 `BuildRequest` carries a `PayloadId` response channel and is forwarded to the processing task, which calls `engine_api::forkchoice_updated` with the payload attributes to begin block building and returns the resulting `PayloadId`.
 
 `GetPayloadRequest` carries attributes and a result channel; the processing task calls `engine_api::get_payload` and returns the sealed `BaseExecutionPayloadEnvelope`.
 
-`SealRequest` is similar to `GetPayloadRequest` but used in the sequencer path where the result will be gossiped and then inserted.
+Both validator and sequencer routing use the same `EngineProcessor` build/seal request methods. They send the operation's result before handling its error severity. The returned reset outcome lets the sequencer reject a reset that invalidates active shadow reconciliation without coupling that policy to validator processing.
 
-`ProcessUnsafeL2BlockRequest` is fire-and-forget. It takes a `BaseExecutionPayloadEnvelope` received from the P2P network or from the sequencer's insert step, calls `engine_api::new_payload`, then calls `engine_api::forkchoice_updated` to make the block the new unsafe head.
+Validators start `EngineProcessor` directly through `EngineRequestReceiver`; no wrapper owns an otherwise identical processor. Sequencers retain `SequencerEngineRequestCoordinator` because it owns conductor bootstrap, canonical catch-up, and shadow reconciliation. The separate unsafe-head watch is an ordering boundary: it is published after catch-up/reset bookkeeping, not at every intermediate engine-state update.
+
+`ProcessUnsafeL2BlockRequest` enqueues an authenticated P2P payload without an insertion acknowledgment. `ProcessLocalUnsafeL2BlockRequest` carries a locally sealed payload and a response channel: the sequencer waits for successful `new_payload` and forkchoice insertion of that exact payload before building its child. Admin payloads have a separate request variant, preserving their provenance and mode-specific restrictions.
 
 `ProcessSafeL2SignalRequest` takes a `ConsolidateInput` from the derivation actor — either a derived set of `AttributesWithParent` or a delegated `L2BlockInfo` — and runs the safe-head consolidation path: attributes are forwarded to `engine_api::forkchoice_updated`, and the resulting safe head is sent back to the derivation actor via the `QueuedEngineDerivationClient`.
 

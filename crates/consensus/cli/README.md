@@ -13,6 +13,12 @@ This crate provides reusable CLI argument types for configuring Base consensus c
 
 ## Usage
 
+Standalone and integrated node startup both use
+`ConsensusNodeArgs::start_with_options(ConsensusNodeStartOptions)`.
+The options carry the rollup configuration, endpoint overrides, cancellation token,
+and whether upgrade-signal startup has already been applied by the embedded execution node.
+There is no separate startup path for each combination of these options.
+
 ```toml
 [dependencies]
 base-consensus-cli = { workspace = true }
