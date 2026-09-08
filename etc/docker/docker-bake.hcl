@@ -14,20 +14,14 @@ variable "ZK_HOST_PROFILE" {
   default = "release"
 }
 
-variable "BATCHER_IMPL" {
-  default = "op-batcher"
-  validation {
-    condition = contains(["op-batcher", "base-batcher"], BATCHER_IMPL)
-    error_message = "BATCHER_IMPL must be op-batcher or base-batcher."
-  }
-}
-
+# The devnet always builds both batchers: the canonical Go op-batcher and the
+# Rust base batcher (part of the `base` image), which runs in shadow mode.
 variable "DEVNET_TARGETS" {
-  default = BATCHER_IMPL == "op-batcher" ? ["base", "op-batcher"] : ["base"]
+  default = ["base", "op-batcher"]
 }
 
 variable "INGRESS_TARGETS" {
-  default = concat(["base", "ingress-rpc", "audit-archiver"], BATCHER_IMPL == "op-batcher" ? ["op-batcher"] : [])
+  default = ["base", "ingress-rpc", "audit-archiver", "op-batcher"]
 }
 
 group "default" {

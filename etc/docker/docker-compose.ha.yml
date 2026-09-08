@@ -50,13 +50,19 @@ services:
       - NODE_HEALTHCHECK_CL_RPC_PORT=${L2_BUILDER_CL_RPC_PORT}
       - OTEL_SERVICE_NAME=base-builder
 
+  # Both batchers read the leader through the conductor rollup proxy in HA.
+  op-batcher:
+    depends_on:
+      setup-conductor:
+        condition: service_completed_successfully
+    environment:
+      - OP_BATCHER_ROLLUP_RPC=http://op-conductor-0:${CONDUCTOR0_RPC_PORT}
+
   base-batcher:
     depends_on:
       setup-conductor:
         condition: service_completed_successfully
-    # Each implementation reads its own rollup RPC environment variable.
     environment:
-      - OP_BATCHER_ROLLUP_RPC=http://op-conductor-0:${CONDUCTOR0_RPC_PORT}
       - BASE_BATCHER_ROLLUP_RPC_URL=http://op-conductor-0:${CONDUCTOR0_RPC_PORT}
 
   base-sequencer-1:
