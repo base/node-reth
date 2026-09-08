@@ -4598,6 +4598,7 @@ dependencies = [
  "alloy-primitives",
  "base-node-runner",
  "base-precompile-storage",
+ "criterion",
  "reth-provider",
  "tracing",
 ]
