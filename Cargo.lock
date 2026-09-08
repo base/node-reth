@@ -2904,6 +2904,7 @@ name = "base"
 version = "0.0.0"
 dependencies = [
  "alloy-chains",
+ "base-batcher-cli",
  "base-builder-cli",
  "base-builder-core",
  "base-builder-metering",
@@ -2925,6 +2926,7 @@ dependencies = [
  "figment",
  "reth-cli-commands",
  "reth-cli-runner",
+ "reth-cli-util",
  "serde",
  "tokio",
  "tokio-util",
@@ -3024,7 +3026,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-batcher-bin"
+name = "base-batcher-cli"
 version = "0.0.0"
 dependencies = [
  "alloy-primitives",
@@ -3033,13 +3035,11 @@ dependencies = [
  "base-batcher-encoder",
  "base-batcher-service",
  "base-cli-utils",
- "base-protocol",
  "base-runtime",
  "base-tx-manager",
  "clap",
  "eyre",
  "humantime",
- "serde",
  "tracing",
  "url",
 ]
@@ -4402,6 +4402,7 @@ dependencies = [
  "base-execution-chainspec",
  "base-execution-eip8130-rpc",
  "base-node-runner",
+ "base-protocol",
  "base-test-utils",
  "eyre",
  "serde_json",
@@ -6497,6 +6498,7 @@ dependencies = [
  "base-execution-txpool",
  "base-node-runner",
  "base-observability-events",
+ "base-test-utils",
  "eyre",
  "httpmock",
  "jsonrpsee",
@@ -11377,13 +11379,13 @@ dependencies = [
  "alloy-primitives",
  "alloy-provider",
  "alloy-rpc-types-eth 2.4.1",
+ "alloy-signer 2.4.1",
  "alloy-signer-local 2.4.1",
  "anyhow",
  "async-trait",
  "audit-archiver-lib",
  "axum 0.8.9",
  "base-bundles",
- "base-common-chains",
  "base-common-consensus",
  "base-common-evm",
  "base-common-network",

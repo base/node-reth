@@ -14,12 +14,20 @@ variable "ZK_HOST_PROFILE" {
   default = "release"
 }
 
+variable "BATCHER_IMPL" {
+  default = "op-batcher"
+  validation {
+    condition = contains(["op-batcher", "base-batcher"], BATCHER_IMPL)
+    error_message = "BATCHER_IMPL must be op-batcher or base-batcher."
+  }
+}
+
 variable "DEVNET_TARGETS" {
-  default = ["base", "op-batcher"]
+  default = BATCHER_IMPL == "op-batcher" ? ["base", "op-batcher"] : ["base"]
 }
 
 variable "INGRESS_TARGETS" {
-  default = ["base", "op-batcher", "ingress-rpc", "audit-archiver"]
+  default = concat(["base", "ingress-rpc", "audit-archiver"], BATCHER_IMPL == "op-batcher" ? ["op-batcher"] : [])
 }
 
 group "default" {
@@ -38,7 +46,6 @@ group "rust-services" {
     "websocket-proxy",
     "ingress-rpc",
     "audit-archiver",
-    "batcher",
     "sidecrush",
     "prover-service",
     "zk-host",
@@ -53,12 +60,19 @@ group "ingress" {
   targets = INGRESS_TARGETS
 }
 
+target "profiling-tools" {
+  context = "."
+  dockerfile = "etc/docker/Dockerfile.profiling-tools"
+  tags = ["base-profiling-tools:local"]
+}
+
 target "_rust-service-common" {
   context = "."
   dockerfile = "etc/docker/Dockerfile.rust-services"
   args = {
     PROFILE = "${PROFILE}"
     RUST_VERSION = "${RUST_VERSION}"
+    RUSTFLAGS = PROFILE == "profiling" ? "-C link-arg=-fuse-ld=lld -Cforce-frame-pointers=yes" : "-C link-arg=-fuse-ld=lld"
   }
 }
 
@@ -71,6 +85,7 @@ target "base" {
   target = "base"
   args = {
     CARGO_CHEF_ARGS = "--package base --package base-reth-node --package base-consensus --package base-snapshotter-bin"
+    CARGO_FEATURES = PROFILE == "profiling" ? "--features=base/jemalloc-prof,base-reth-node/jemalloc-prof" : ""
     SCCACHE_CACHE_ID = "rust-services-base-sccache"
   }
   tags = ["base:local"]
@@ -81,6 +96,7 @@ target "execution" {
   target = "execution"
   args = {
     CARGO_CHEF_ARGS = "--package base-reth-node"
+    CARGO_FEATURES = PROFILE == "profiling" ? "--features=jemalloc-prof" : ""
     SCCACHE_CACHE_ID = "rust-services-execution-sccache"
   }
   tags = ["base-execution:local"]
@@ -101,6 +117,7 @@ target "builder" {
   target = "builder"
   args = {
     CARGO_CHEF_ARGS = "--package base-builder-bin"
+    CARGO_FEATURES = PROFILE == "profiling" ? "--features=jemalloc-prof" : ""
     SCCACHE_CACHE_ID = "rust-services-builder-sccache"
   }
   tags = ["base-builder:local"]
@@ -164,16 +181,6 @@ target "audit-archiver" {
     SCCACHE_CACHE_ID = "rust-services-audit-archiver-sccache"
   }
   tags = ["audit-archiver:local"]
-}
-
-target "batcher" {
-  inherits = ["_rust-service-common"]
-  target = "batcher"
-  args = {
-    CARGO_CHEF_ARGS = "--package base-batcher-bin"
-    SCCACHE_CACHE_ID = "rust-services-batcher-sccache"
-  }
-  tags = ["base-batcher:local"]
 }
 
 target "op-batcher" {

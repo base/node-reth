@@ -113,6 +113,10 @@ L2_PROOFS_CL_RPC_PORT=8749
 PROVER_SERVICE_RPC_PORT=19000
 PROPOSER_HEALTH_PORT=18080
 
+# Batcher implementation: op-batcher (default) or base-batcher (base batcher).
+# Applies to single, HA, Anvil, ingress, and profiling devnets.
+BATCHER_IMPL=op-batcher
+
 # Batcher Ports
 BATCHER_METRICS_PORT=6060
 

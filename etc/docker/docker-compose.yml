@@ -5,38 +5,68 @@ x-rust-service-build: &rust-service-build
     PROFILE: "${CARGO_PROFILE:-dev}"
     BASE_SUCCINCT_ELF_REQUIRE: "${BASE_SUCCINCT_ELF_REQUIRE:-0}"
 
-x-node-healthcheck: &node-healthcheck
-  test: ["CMD-SHELL", "curl -sf -H 'Content-Type: application/json' --data '{\"jsonrpc\":\"2.0\",\"method\":\"eth_chainId\",\"params\":[],\"id\":1}' \"http://localhost:$${NODE_HEALTHCHECK_HTTP_PORT}/\" >/dev/null && curl -sf \"http://localhost:$${NODE_HEALTHCHECK_CL_RPC_PORT}/healthz\" >/dev/null"]
+x-healthcheck-defaults: &healthcheck-defaults
   interval: 250ms
   timeout: 1s
   retries: 240
   start_period: 250ms
+  start_interval: 250ms
+
+x-node-healthcheck: &node-healthcheck
+  test: ["CMD-SHELL", "curl -sf -H 'Content-Type: application/json' --data '{\"jsonrpc\":\"2.0\",\"method\":\"eth_chainId\",\"params\":[],\"id\":1}' \"http://localhost:$${NODE_HEALTHCHECK_HTTP_PORT}/\" >/dev/null && curl -sf \"http://localhost:$${NODE_HEALTHCHECK_CL_RPC_PORT}/healthz\" >/dev/null"]
+  <<: *healthcheck-defaults
 
 services:
-  setup-l1:
-    image: devnet-setup:local
+  setup-devnet:
+    image: devnet-setup:local-v2
     build:
       context: ../..
       dockerfile: etc/docker/Dockerfile.devnet
-    container_name: setup-l1
+    container_name: setup-devnet
     env_file: devnet-env
     volumes:
+      - ../../.devnet/l2/configs:/devnet/l2/configs
       - ../../.devnet/l1/configs:/output
       - ../../.devnet/l1/reth:/data/l1-reth
       - ../../.devnet/l1/lighthouse:/data/l1-lighthouse
     environment:
+      - UPGRADE_SIGNAL_MODE=${UPGRADE_SIGNAL_MODE:-runtime-admin}
+      - UPGRADE_SIGNAL_L1_BLOCK_TAG=${UPGRADE_SIGNAL_L1_BLOCK_TAG:-latest}
+      - UPGRADE_SIGNAL_MIN_PROTOCOL_VERSION=${UPGRADE_SIGNAL_MIN_PROTOCOL_VERSION:-4294967296}
+      - L2_DEPLOYMENT_TARGET=genesis
+      - L1_RPC_URL=http://l1-el:${L1_HTTP_PORT}
+      - L1_CHAIN_ID=${L1_CHAIN_ID}
+      - L2_CHAIN_ID=${L2_CHAIN_ID}
+      - DEPLOYER_ADDR=${DEPLOYER_ADDR}
+      - DEPLOYER_KEY=${DEPLOYER_KEY}
+      - SEQUENCER_ADDR=${SEQUENCER_ADDR}
+      - BATCHER_ADDR=${BATCHER_ADDR}
+      - PROPOSER_ADDR=${PROPOSER_ADDR}
+      - CHALLENGER_ADDR=${CHALLENGER_ADDR}
+      - BUILDER_P2P_KEY=${BUILDER_P2P_KEY}
+      - BUILDER_ENODE_ID=${BUILDER_ENODE_ID}
+      - L2_EL_BOOTNODE_P2P_KEY=${L2_EL_BOOTNODE_P2P_KEY}
+      - L2_EL_BOOTNODE_ENODE_ID=${L2_EL_BOOTNODE_ENODE_ID}
+      - L2_EL_BOOTNODE_ENODE=${L2_EL_BOOTNODE_ENODE}
+      - L2_CL_BOOTNODE_P2P_KEY=${L2_CL_BOOTNODE_P2P_KEY}
+      - L2_CL_BOOTNODE_ENR_PATH=${L2_CL_BOOTNODE_ENR_PATH}
+      - L2_BASE_AZUL_BLOCK=${L2_BASE_AZUL_BLOCK-}
+      - L2_BASE_BERYL_BLOCK=${L2_BASE_BERYL_BLOCK-}
+      - L2_BASE_COBALT_BLOCK=${L2_BASE_COBALT_BLOCK-}
+      - L2_BASE_DENIM_BLOCK=${L2_BASE_DENIM_BLOCK-}
+      - L2_BASE_ZENITH_BLOCK=${L2_BASE_ZENITH_BLOCK-}
       - CHAIN_ID=${L1_CHAIN_ID}
       - SLOT_DURATION=${L1_SLOT_DURATION_OVERRIDE:-12}
       - OUTPUT_DIR=/output
       - SHARED_DIR=/output
       - L1_DATA_DIR=/data
-    entrypoint: ["/usr/local/bin/setup-l1.sh"]
+    entrypoint: ["/usr/local/bin/op-deployer"]
 
   l1-el:
-    image: ghcr.io/paradigmxyz/reth:v1.11.4
+    image: ghcr.io/paradigmxyz/reth:v2.5.2
     container_name: l1-el
     depends_on:
-      setup-l1:
+      setup-devnet:
         condition: service_completed_successfully
     ports:
       - "${L1_HTTP_PORT}:${L1_HTTP_PORT}"   # HTTP RPC
@@ -71,17 +101,14 @@ services:
       - -vvv
     healthcheck:
       test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/${L1_HTTP_PORT}"]
-      interval: 250ms
-      timeout: 1s
-      retries: 240
-      start_period: 250ms
+      <<: *healthcheck-defaults
     restart: unless-stopped
 
   l1-cl:
-    image: sigp/lighthouse:v8.0.1
+    image: sigp/lighthouse:v8.2.2
     container_name: l1-cl
     depends_on:
-      setup-l1:
+      setup-devnet:
         condition: service_completed_successfully
     ports:
       - "${L1_CL_HTTP_PORT}:${L1_CL_HTTP_PORT}"     # Beacon API
@@ -115,15 +142,22 @@ services:
       - --prepare-payload-lookahead=8000
       - --suggested-fee-recipient=${FEE_RECIPIENT}
     healthcheck:
-      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/${L1_CL_HTTP_PORT}"]
-      interval: 250ms
-      timeout: 1s
-      retries: 240
-      start_period: 250ms
+      # L2 initialization immediately requests beacon genesis; a listening port
+      # alone does not guarantee that this endpoint is ready.
+      test:
+        - CMD
+        - bash
+        - -ec
+        - |
+          exec 3<>/dev/tcp/localhost/${L1_CL_HTTP_PORT}
+          printf 'GET /eth/v1/beacon/genesis HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3
+          read -r protocol status rest <&3
+          [[ "$$status" == 200 ]]
+      <<: *healthcheck-defaults
     restart: unless-stopped
 
   l1-vc:
-    image: sigp/lighthouse:v8.0.1
+    image: sigp/lighthouse:v8.2.2
     container_name: l1-vc
     depends_on:
       l1-cl:
@@ -140,56 +174,19 @@ services:
       - --suggested-fee-recipient=${FEE_RECIPIENT}
     restart: unless-stopped
 
-  setup-l2:
-    image: devnet-setup:local
-    build:
-      context: ../..
-      dockerfile: etc/docker/Dockerfile.devnet
-    container_name: setup-l2
-    env_file: devnet-env
-    depends_on:
-      l1-el:
-        condition: service_healthy
-    volumes:
-      - ../../.devnet:/devnet
-      - ../../.devnet/l2/builder:/data/l2-builder
-      - ../../.devnet/l2/builder-cl:/data/l2-builder-cl
-      - ../../.devnet/l2/client:/data/l2-client
-      - ../../.devnet/l2/client-cl:/data/l2-client-cl
-    environment:
-      - L1_RPC_URL=http://l1-el:${L1_HTTP_PORT}
-      - L1_CHAIN_ID=${L1_CHAIN_ID}
-      - L2_CHAIN_ID=${L2_CHAIN_ID}
-      - L2_BASE_AZUL_BLOCK=${L2_BASE_AZUL_BLOCK-}
-      - L2_BASE_BERYL_BLOCK=${L2_BASE_BERYL_BLOCK-}
-      - L2_BASE_COBALT_BLOCK=${L2_BASE_COBALT_BLOCK-}
-      - L2_BASE_DENIM_BLOCK=${L2_BASE_DENIM_BLOCK-}
-      - L2_BASE_ZENITH_BLOCK=${L2_BASE_ZENITH_BLOCK-}
-      - OUTPUT_DIR=/devnet/l2/configs
-      - L2_DATA_DIR=/data
-      - DEPLOYER_ADDR=${DEPLOYER_ADDR}
-      - DEPLOYER_KEY=${DEPLOYER_KEY}
-      - SEQUENCER_ADDR=${SEQUENCER_ADDR}
-      - BATCHER_ADDR=${BATCHER_ADDR}
-      - PROPOSER_ADDR=${PROPOSER_ADDR}
-      - CHALLENGER_ADDR=${CHALLENGER_ADDR}
-      - BUILDER_P2P_KEY=${BUILDER_P2P_KEY}
-      - BUILDER_ENODE_ID=${BUILDER_ENODE_ID}
-      - L2_EL_BOOTNODE_P2P_KEY=${L2_EL_BOOTNODE_P2P_KEY}
-      - L2_EL_BOOTNODE_ENODE_ID=${L2_EL_BOOTNODE_ENODE_ID}
-      - L2_EL_BOOTNODE_ENODE=${L2_EL_BOOTNODE_ENODE}
-      - L2_CL_BOOTNODE_P2P_KEY=${L2_CL_BOOTNODE_P2P_KEY}
-      - L2_CL_BOOTNODE_ENR_PATH=${L2_CL_BOOTNODE_ENR_PATH}
-    entrypoint: ["/usr/local/bin/setup-l2.sh"]
-
   base-bootnode:
     image: base:local
     build:
       <<: *rust-service-build
       target: base
     container_name: base-bootnode
+    # Gate L2 startup on the L1 execution and beacon APIs.
     depends_on:
-      setup-l2:
+      l1-el:
+        condition: service_healthy
+      l1-cl:
+        condition: service_healthy
+      setup-devnet:
         condition: service_completed_successfully
     ports:
       - "${L2_EL_BOOTNODE_P2P_PORT}:${L2_EL_BOOTNODE_P2P_PORT}/udp" # Discovery
@@ -231,10 +228,7 @@ services:
         ipv4_address: ${L2_EL_BOOTNODE_ADVERTISE_IP}
     healthcheck:
       test: ["CMD", "test", "-s", "${L2_CL_BOOTNODE_ENR_PATH}"]
-      interval: 250ms
-      timeout: 1s
-      retries: 240
-      start_period: 250ms
+      <<: *healthcheck-defaults
     restart: unless-stopped
 
   base-builder:
@@ -244,7 +238,7 @@ services:
       target: base
     container_name: base-builder
     depends_on:
-      setup-l2:
+      setup-devnet:
         condition: service_completed_successfully
       base-bootnode:
         condition: service_healthy
@@ -362,46 +356,17 @@ services:
     restart: unless-stopped
 
   base-batcher:
-    image: op-batcher:local
-    build:
-      context: ../..
-      dockerfile: etc/docker/Dockerfile.op-batcher
+    extends:
+      file: docker-compose.batchers.yml
+      service: ${BATCHER_IMPL:-op-batcher}
     container_name: base-batcher
+    # Skip the L1 receipt drain when stopping the disposable devnet batcher.
+    stop_signal: SIGKILL
     depends_on:
       base-builder:
         condition: service_healthy
     ports:
       - "${BATCHER_METRICS_PORT}:${BATCHER_METRICS_PORT}"   # Metrics
-    command:
-      - --l1-eth-rpc
-      - http://l1-el:${L1_HTTP_PORT}
-      - --l2-eth-rpc
-      - http://base-builder:${L2_BUILDER_HTTP_PORT}
-      - --rollup-rpc
-      - http://base-builder:${L2_BUILDER_CL_RPC_PORT}
-      - --private-key
-      - ${BATCHER_KEY}
-      - --batch-type=0
-      - --data-availability-type=blobs
-      - --compression-algo=brotli
-      - --compressor=shadow
-      - --max-channel-duration
-      - "2"
-      - --poll-interval
-      - "1s"
-      - --sub-safety-margin
-      - "0"
-      - --num-confirmations
-      - "1"
-      - --max-pending-tx=1
-      - --target-num-frames=1
-      # Devnet L1 has Fusaka active at genesis; chain 1337 is not auto-detected.
-      - --txmgr.cell-proof-time=0
-      - --metrics.enabled
-      - --metrics.addr
-      - "0.0.0.0"
-      - --metrics.port
-      - "${BATCHER_METRICS_PORT}"
     restart: unless-stopped
 
   base-client:
@@ -411,7 +376,7 @@ services:
       target: base
     container_name: base-client
     depends_on:
-      setup-l2:
+      setup-devnet:
         condition: service_completed_successfully
       base-bootnode:
         condition: service_healthy
@@ -530,7 +495,7 @@ services:
       target: base
     container_name: base-rpc
     depends_on:
-      setup-l2:
+      setup-devnet:
         condition: service_completed_successfully
       base-bootnode:
         condition: service_healthy
@@ -663,6 +628,17 @@ services:
     depends_on:
       - pyroscope
     restart: unless-stopped
+
+  profiling-tools:
+    image: base-profiling-tools:local
+    profiles: ["profiling-tools"]
+    build:
+      context: ../..
+      dockerfile: etc/docker/Dockerfile.profiling-tools
+    volumes:
+      - ../../profiling-results:/profiles
+    depends_on:
+      - pyroscope
 
   prometheus:
     image: prom/prometheus:v2.51.0
