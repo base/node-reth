@@ -163,6 +163,7 @@ impl SnapshotGenerator {
             Some(block) => block,
             None => infer_block_from_headers(params.source_datadir)?,
         };
+        let total_blocks = block.checked_add(1).context("snapshot block height exceeds u64")?;
 
         info!(
             source = %params.source_datadir.display(),
@@ -183,7 +184,7 @@ impl SnapshotGenerator {
 
         let mut components = BTreeMap::new();
 
-        let num_chunks = block.div_ceil(blocks_per_file);
+        let num_chunks = total_blocks.div_ceil(blocks_per_file);
         if num_chunks > MAX_CHUNKS {
             bail!(
                 "too many chunks ({num_chunks}) for block {block} with blocks_per_file \
@@ -286,7 +287,7 @@ impl SnapshotGenerator {
                 info!(
                     component = key,
                     compressed_size = total_size,
-                    total_blocks = block,
+                    total_blocks,
                     "packaged chunked component"
                 );
 
@@ -294,7 +295,7 @@ impl SnapshotGenerator {
                     key.to_string(),
                     ComponentManifest::Chunked(ChunkedArchive {
                         blocks_per_file,
-                        total_blocks: block,
+                        total_blocks,
                         chunk_sizes,
                         chunk_decompressed_sizes: chunk_decompressed,
                         chunk_output_files,
@@ -909,6 +910,48 @@ mod tests {
     }
 
     #[test]
+    fn generate_manifest_includes_chunk_containing_exact_block_height() {
+        let source = tempfile::tempdir().unwrap();
+        let output = tempfile::tempdir().unwrap();
+        let db_dir = source.path().join("db");
+        std::fs::create_dir_all(&db_dir).unwrap();
+        std::fs::write(db_dir.join("mdbx.dat"), b"state-data").unwrap();
+
+        let static_files_dir = source.path().join("static_files");
+        std::fs::create_dir_all(&static_files_dir).unwrap();
+        std::fs::write(static_files_dir.join("static_file_headers_0_499999"), b"first").unwrap();
+        std::fs::write(static_files_dir.join("static_file_headers_500000_999999"), b"second")
+            .unwrap();
+
+        let remote = HashMap::new();
+        let files = SnapshotGenerator::generate_manifest(&test_manifest_params(
+            source.path(),
+            output.path(),
+            &remote,
+            None,
+            Some(500_000),
+            false,
+        ))
+        .unwrap();
+
+        assert!(files.iter().any(|path| {
+            path.file_name().is_some_and(|name| name == "headers-500000-999999.tar.zst")
+        }));
+
+        let manifest: SnapshotManifest =
+            serde_json::from_slice(&std::fs::read(output.path().join("manifest.json")).unwrap())
+                .unwrap();
+        assert_eq!(manifest.block, 500_000);
+        let ComponentManifest::Chunked(headers) = &manifest.components["headers"] else {
+            panic!("headers component should be chunked");
+        };
+        assert_eq!(headers.total_blocks, 500_001);
+        assert_eq!(headers.chunk_sizes.len(), 2);
+        assert_eq!(headers.chunk_output_files.len(), 2);
+        assert!(!headers.chunk_output_files[1].is_empty());
+    }
+
+    #[test]
     fn generate_manifest_creates_proofs_archive() {
         let source = tempfile::tempdir().unwrap();
         let output = tempfile::tempdir().unwrap();
@@ -1069,7 +1112,7 @@ mod tests {
             output.path(),
             &remote,
             Some(&previous_manifest),
-            Some(2_000_000),
+            Some(1_999_999),
             false,
         ))
         .unwrap();
@@ -1131,7 +1174,7 @@ mod tests {
             output_dir: output.path(),
             chain_id: 8453,
             base_url: None,
-            block: Some(2_000_000),
+            block: Some(1_999_999),
             blocks_per_file: Some(500_000),
             remote_static_files: &remote,
             previous_manifest: Some(&previous_manifest),
