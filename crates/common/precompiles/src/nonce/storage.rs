@@ -57,8 +57,10 @@ impl NonceManagerStorage<'_> {
     /// Sourced from the engine-neutral [`NonceManagerSlots`] so off-chain readers
     /// (e.g. RPC) can derive `nonces[account][nonce_key]` slots without
     /// instantiating the precompile, and so the revm and EVM2 engines share one
-    /// slot layout. The `slots_match_shared_layout` test pins the macro-generated
-    /// storage layout to this shared constant. Pair with [`Self::nonce_slot`].
+    /// slot layout. The `nonce_slot_matches_handler_chain` and
+    /// `expiring_nonce_seen_slot_matches_handler_chain` tests pin the
+    /// macro-generated storage layout to these shared constants. Pair with
+    /// [`Self::nonce_slot`].
     pub const NONCES_BASE_SLOT: U256 = NonceManagerSlots::NONCES_BASE_SLOT;
     /// Base storage slot of the nonce-free replay mapping.
     pub const EXPIRING_NONCE_SEEN_BASE_SLOT: U256 =
