@@ -46,8 +46,15 @@ RUN set -eux; \
     unzip /tmp/protoc.zip -d /usr/local; \
     rm /tmp/protoc.zip
 
-FROM rust-builder-base AS planner
-COPY . .
+FROM rust-builder-base AS workspace-source
+COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY actions ./actions
+COPY bin ./bin
+COPY crates ./crates
+COPY etc/tools ./etc/tools
+COPY etc/systems ./etc/systems
+
+FROM workspace-source AS planner
 RUN cargo chef prepare --recipe-path recipe.json
 
 FROM rust-builder-base AS rust-deps
@@ -62,8 +69,10 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     cargo chef cook --profile "$PROFILE" --recipe-path recipe.json ${CARGO_CHEF_ARGS} ${CARGO_FEATURES}
 
 FROM rust-deps AS source
-COPY . .
+COPY --from=workspace-source /app/ /app/
 
+# Cargo uses mtimes for freshness, but Docker may restore older source timestamps.
+# Compare content against the target cache so changed and reverted files rebuild.
 FROM source AS base-image-builder
 ARG PROFILE=release
 ARG CARGO_FEATURES=""
@@ -71,12 +80,20 @@ ARG SCCACHE_CACHE_ID=rust-services-sccache
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=${SCCACHE_CACHE_ID},target=/sccache,sharing=locked \
+    --mount=type=cache,id=${SCCACHE_CACHE_ID}-${PROFILE}-target,target=/app/target,from=rust-deps,source=/app/target,sharing=locked \
     set -eux; \
+    if [ "$PROFILE" = "dev" ]; then export CARGO_PROFILE_DEV_DEBUG=0; fi; \
+    source_roots="Cargo.toml Cargo.lock rust-toolchain.toml actions bin crates etc/tools etc/systems"; \
+    find $source_roots -type f -exec sha256sum --zero {} + | LC_ALL=C sort -z > /tmp/source-checksums; \
+    touch /app/target/.source-checksums-v1; \
+    LC_ALL=C comm -z -13 /app/target/.source-checksums-v1 /tmp/source-checksums | \
+      cut -z -c67- | xargs -0 -r touch --; \
     cargo build --profile "$PROFILE" ${CARGO_FEATURES} \
       --package base --bin base \
       --package base-reth-node --bin base-reth-node \
       --package base-consensus --bin base-consensus \
       --package base-snapshotter-bin --bin snapshotter; \
+    mv /tmp/source-checksums /app/target/.source-checksums-v1; \
     profile_dir="$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")"; \
     cp "/app/target/${profile_dir}/base" /app/base; \
     cp "/app/target/${profile_dir}/base-reth-node" /app/base-reth-node; \
@@ -219,8 +236,6 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 RUN mkdir -p /var/log/supervisor
 COPY --from=base-image-builder /app/base ./base
-# Compose uses this wrapper to source generated devnet upgrade-signal env before /app/base.
-COPY etc/scripts/devnet/base-entrypoint.sh ./base-entrypoint.sh
 # Keep split binaries here for now, needed for bare metal work
 # Remove only when there is an alternative available
 # e.g. when we publish independent separate Docker images for each
@@ -228,6 +243,8 @@ COPY etc/scripts/devnet/base-entrypoint.sh ./base-entrypoint.sh
 COPY --from=base-image-builder /app/base-reth-node ./base-reth-node
 COPY --from=base-image-builder /app/base-consensus ./base-consensus
 COPY --from=base-image-builder /app/snapshotter ./snapshotter
+# Compose uses this wrapper to source generated devnet upgrade-signal env before /app/base.
+COPY etc/scripts/devnet/base-entrypoint.sh ./base-entrypoint.sh
 COPY etc/scripts/node/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 COPY etc/scripts/node/execution-entrypoint .
 COPY etc/scripts/node/consensus-entrypoint .
